@@ -1,0 +1,16 @@
+{
+    "name": "ConfigAiiDAlab",
+    "version": "0.1.0",
+    "description": "AiiDAlab application for configuring SSH and remote environments for CSCS.",
+    "authors": [
+        "User"
+    ],
+    "license": "MIT",
+    "aiidalab_min_version": "20.04",
+    "categories": [
+        "Configuration",
+        "SSH",
+        "Remote Computing"
+    ],
+    "app_entrypoint": "ConfigAiiDAlab.ipynb"
+}
