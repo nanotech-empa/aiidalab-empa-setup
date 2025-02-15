@@ -6,15 +6,20 @@ import yaml
 import ipywidgets as ipw
 from IPython.display import display
 import time
+from datetime import datetime
 python_version = '3.9.13'
 new_host_label = 'daint.alps'
 remotehost = "daint.alps.cscs.ch"  # Ensure this is the correct hostname
 proxy = "ela.cscs.ch"
 # labels for paths
+
 repo_url = "https://github.com/nanotech-empa/aiidalab-alps-files.git"  # files needed on daint
 repo_name = "aiidalab-alps-files"
+GIT_REMOTE = "origin"
+BRANCH = "main"
 home_dir = "/home/jovyan/"
 alps_files = f"{home_dir}{repo_name}/"
+GIT_REPO_PATH = alps_files
 config_path = f"{home_dir}.ssh/config"
 config_source = f"{alps_files}config"
 config_without_ela = f"{alps_files}config_without_ela"
@@ -32,6 +37,46 @@ yml_and_config_files = [
     "config_without_ela",
     'bashrc_template'
 ]
+def get_latest_remote_commit():
+    """Fetch the latest commit hash from the remote repository."""
+    try:
+        result = subprocess.run(
+            ["git", "ls-remote", GIT_REMOTE, BRANCH],
+            cwd=GIT_REPO_PATH,
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        return result.stdout.split()[0] if result.stdout else None
+    except subprocess.CalledProcessError:
+        return None
+
+def get_local_commit():
+    """Get the latest local commit hash."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=GIT_REPO_PATH,
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        return result.stdout.strip()
+    except subprocess.CalledProcessError:
+        return None
+
+def check_for_updates():
+    """Check if there is a new update available."""
+    local_commit = get_local_commit()
+    remote_commit = get_latest_remote_commit()
+    if not local_commit or not remote_commit:
+        return "<b style='color:red;'>❌ Unable to check for updates.</b>"
+
+    if local_commit != remote_commit:
+        return "<b style='color:orange;'>🔄 A new update is available. Please apply updates.</b>"
+    else:
+            return "<b style='color:green;'>✅ Your configuration is up to date.</b>"
+
 def process_yml_files(yml_files):
     """
     Given a list of YAML file names, this function:

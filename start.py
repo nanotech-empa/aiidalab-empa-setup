@@ -1,4 +1,6 @@
+import asyncio
 import ipywidgets as ipw
+from datetime import datetime
 from utils.config import * 
 __version__ = "v2025.0214"
 
@@ -24,6 +26,8 @@ class ConfigAiiDAlabApp(ipw.VBox):  # ✅ Correct inheritance
             layout=ipw.Layout(width='400px'),
             style=style
         )
+        
+        self.update_message = ipw.HTML("Nothing to report")
 
         # Checkbox for QE Postprocess
         self.qe_postprocess_checkbox = ipw.Checkbox(value=False, description="QE Postprocess")
@@ -44,6 +48,7 @@ class ConfigAiiDAlabApp(ipw.VBox):  # ✅ Correct inheritance
         # ✅ Call VBox constructor directly instead of assigning self.layout
         super().__init__([
             self.title,
+            self.update_message,
             self.username_widget,
             self.account_widget,
             self.qe_postprocess_checkbox,
@@ -51,7 +56,15 @@ class ConfigAiiDAlabApp(ipw.VBox):  # ✅ Correct inheritance
             self.subtitle,
             self.output
         ])
+        asyncio.ensure_future(self._start_periodic_check(3))
         
+    async def _start_periodic_check(self, interval):
+        """Periodically check for updates."""
+        while True:
+            update_result = await asyncio.to_thread(check_for_updates)
+            self.update_message.value = datetime.now().strftime("%Y-%m-%d %H:%M:%S") +'  '+ update_result
+            await asyncio.sleep(interval)
+                   
     def clear_output(self,_):
         self.output.clear_output()
         self.subtitle.value = ""
