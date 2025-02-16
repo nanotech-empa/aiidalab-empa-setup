@@ -1,42 +1,49 @@
 import os
 import re
+from pathlib import Path
+import shutil
 import subprocess
 from datetime import datetime
 import yaml
 import ipywidgets as ipw
 from IPython.display import display
 import time
-from datetime import datetime
-python_version = '3.9.13'
-new_host_label = 'daint.alps'
-remotehost = "daint.alps.cscs.ch"  # Ensure this is the correct hostname
-proxy = "ela.cscs.ch"
-# labels for paths
+from datetime import datetime,timedelta
+from aiida import load_profile
+from aiida.orm import load_node
+from aiida.orm import QueryBuilder, WorkChainNode, StructureData, Node
 
-repo_url = "https://github.com/nanotech-empa/aiidalab-alps-files.git"  # files needed on daint
+# labels for paths
+alps_files ='' # REMOVE
 repo_name = "aiidalab-alps-files"
+home_dir = Path("/home/jovyan")  # Explicitly set /home/jovyan
+target_dir = home_dir / "opt"
+config_files = target_dir / repo_name  # Ensure `repo_name` is defined
+config_path = home_dir / ".ssh" 
+configuration_file = config_files / "config.yml"
+GIT_REPO_PATH = config_files
+GIT_URL = "https://github.com/nanotech-empa/aiidalab-alps-files.git"  # files needed on daint
 GIT_REMOTE = "origin"
 BRANCH = "main"
-home_dir = "/home/jovyan/"
-alps_files = f"{home_dir}{repo_name}/"
-GIT_REPO_PATH = alps_files
-config_path = f"{home_dir}.ssh/config"
-config_source = f"{alps_files}config"
-config_without_ela = f"{alps_files}config_without_ela"
+
 # labels to rename old host and codes
-relabeled_host = datetime.now().strftime("Used_till_%Y%m%d%H%M")+'_'+new_host_label
-relabeled_code = datetime.now().strftime("Used_till_%Y%m%d%H%M")+'_'
-yml_and_config_files = [
-    "alps_setup.yml",
-    "alps_config.yml",
-    "cp2k.yml",
-    "phonopy.yml",
-    "python.yml",
-    "critic2.yml",
-    "config",
-    "config_without_ela",
-    'bashrc_template'
-]
+def relabel(label,host=False):
+    return datetime.now().strftime("%Y%m%d%H%M")+'_'+label if host else datetime.now().strftime("%Y%m%d%H%M")+'_'
+
+def clone_repository():
+    """Clone the repository if it does not exist."""
+    try:
+        #print("🔄 Cloning repository...")
+        result = subprocess.run(
+            ["git", "clone", "-b", BRANCH, GIT_URL, GIT_REPO_PATH],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        return True  # Repo was successfully cloned
+    except subprocess.CalledProcessError:
+        return False  # Failed to clone
+
 def get_latest_remote_commit():
     """Fetch the latest commit hash from the remote repository."""
     try:
@@ -48,7 +55,7 @@ def get_latest_remote_commit():
             check=True
         )
         return result.stdout.split()[0] if result.stdout else None
-    except subprocess.CalledProcessError:
+    except (subprocess.CalledProcessError, FileNotFoundError):
         return None
 
 def get_local_commit():
@@ -62,20 +69,331 @@ def get_local_commit():
             check=True
         )
         return result.stdout.strip()
-    except subprocess.CalledProcessError:
+    except (subprocess.CalledProcessError, FileNotFoundError):
         return None
 
+def pull_latest_changes():
+    """Pull the latest changes from the remote repository."""
+    try:
+        result = subprocess.run(
+            ["git", "pull", GIT_REMOTE, BRANCH],
+            cwd=GIT_REPO_PATH,
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        return "Already up to date" not in result.stdout
+    except subprocess.CalledProcessError:
+        return False
+def remove_placeholders(str1, str2, ignored_patterns=["cscsusername", "cscsaccount"]):
+    """
+    Removes one of the given placeholders if it appears in exactly one of the strings.
+    The corresponding portion in the other string (up to the next '/', '\n', or space) is also removed.
+
+    :param str1: First string.
+    :param str2: Second string.
+    :param ignored_patterns: List of placeholders to ignore if they appear in exactly one of the strings.
+    :return: Modified versions of str1 and str2.
+    """
+    
+    for ignored_pattern in ignored_patterns:
+        # Check if one string contains the placeholder but the other does not
+        if ignored_pattern in str1 and ignored_pattern not in str2:
+            username_str, other_str = str1, str2
+        elif ignored_pattern in str2 and ignored_pattern not in str1:
+            username_str, other_str = str2, str1
+        else:
+            continue  # If neither or both contain it, move to the next placeholder
+
+        # Find the position of the placeholder in the string that contains it
+        pos = username_str.find(ignored_pattern)
+        if pos == -1:
+            continue  # Should never happen, but just in case
+
+        # Remove the placeholder from the string that contains it
+        modified_username_str = username_str[:pos] + username_str[pos+len(ignored_pattern):]
+
+        # Remove the corresponding part from the other string up to the next '/', '\n', ' ' or end
+        match = re.search(r'[/\n ]', other_str[pos:])  # Find next '/' or '\n' after `pos`
+        if match:
+            end_pos = pos + match.start()  # Absolute position in the string
+            modified_other_str = other_str[:pos] + other_str[end_pos:]
+        else:
+            modified_other_str = other_str[:pos]  # No match found → Remove everything till end
+
+        # Update str1 and str2 for further processing
+        str1, str2 = modified_username_str, modified_other_str
+    return str1, str2
+
+def normalize_text(text):
+    """
+    - Removes extra empty lines.
+    - Ensures a maximum of one space between words (but keeps line breaks).
+    - Removes everything after '#SBATCH --account=' up to the newline.
+    """
+    if text is None:
+        return ""  # Treat None as empty string
+
+    # Normalize each line: strip leading/trailing spaces and reduce multiple spaces to one
+    lines = [re.sub(r"\s+", " ", line.strip()) for line in text.splitlines() if line.strip()]
+
+    # Replace '#SBATCH --account=' followed by anything with just '#SBATCH --account='
+    #lines = [re.sub(r"(#SBATCH --account=).*", r"\1", line) for line in lines]
+
+    # Join lines back together while preserving newlines
+    return "\n".join(lines)
+
+def compare_computer_configuration(computer_name, stored_computer_data):
+    """
+    Compares the setup and config of a computer in AiiDA against the stored values in config.yml.
+
+    :param computer_name: The name of the computer in AiiDA.
+    :param config_file: Path to config.yml.
+    :return: A formatted string with the comparison results.
+    """
+
+    # Get the stored setup and config for the given computer
+    
+    stored_setup = stored_computer_data.get("setup", {})
+    stored_config = stored_computer_data.get("config", {})
+
+    if not stored_setup or not stored_config:
+        return f"❌ Computer '{computer_name}' not found in config.yml!"
+
+    # Step 2: Export the current setup and config from AiiDA
+    setup_export_file = "setup.yml"
+    config_export_file = "config.yml"
+
+    try:
+        subprocess.run(["verdi", "computer", "export", "setup", computer_name, setup_export_file], check=True)
+        subprocess.run(["verdi", "computer", "export", "config", computer_name, config_export_file], check=True)
+    except subprocess.CalledProcessError as e:
+        return False, f"❌ Error exporting AiiDA computer setup/config: {e.stderr}"
+
+    # Step 3: Load exported YAML files
+    with open(setup_export_file, "r") as file:
+        exported_setup = yaml.safe_load(file)
+
+    with open(config_export_file, "r") as file:
+        exported_config = yaml.safe_load(file)
+
+    #setup differences
+    for entry in stored_setup.keys():  
+        str1,str2 = remove_placeholders(normalize_text(str(stored_setup[entry])), 
+                                       normalize_text(str(exported_setup[entry])))
+        if not str1 == str2:
+            return False,f"⚠️ **Setup Differences:**\n"
+    
+    for entry in stored_config.keys(): 
+        str1,str2 = remove_placeholders(normalize_text(str(stored_config[entry])), 
+                                       normalize_text(str(exported_config[entry])))        
+        if not str1==str2:
+            return False,"⚠️ **Config Differences:**\n"        
+
+
+    return True, "✅ No differences found! The stored configuration matches AiiDA.\n"
+
+
+def compare_code_configuration(stored_code_data):
+    computer = stored_code_data['computer']
+    code_label = stored_code_data['label']
+    try:
+        subprocess.run(["verdi", "code", "export", f"{code_label}@{computer}", "export.yml"], check=True)
+    except subprocess.CalledProcessError as e:
+        return False, f"❌ Error exporting AiiDA code setup: {e.stderr}"
+
+    # Step 3: Load exported YAML files
+    with open("export.yml", "r") as file:
+        exported_setup = yaml.safe_load(file)
+
+    #setup differences
+    for entry in stored_code_data.keys():  
+        str1,str2 = remove_placeholders(normalize_text(str(stored_code_data[entry])), 
+                                       normalize_text(str(exported_setup[entry])))
+        if not str1 == str2:
+            return False,f"⚠️ **Setup Differences:**\n"
+        
+    return True, f"✅ No differences found! The stored configuration for {code_label} matches AiiDA.\n"
+
+def aiida_computers():
+    result_msg = ""
+    active_computers = set()
+    not_active_computers = set()
+
+    try:
+        result = subprocess.run(
+            ["verdi", "computer", "list", "-a"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+
+        for line in result.stdout.splitlines():
+            stripped_line = line.strip()
+            if stripped_line.startswith("* "):  # Active  computers
+                active_computers.add(stripped_line[2:])  # Remove "* "
+            elif stripped_line and not stripped_line.startswith("Report:"):  # Inactive computers
+                not_active_computers.add(stripped_line)
+
+    except subprocess.CalledProcessError as e:
+        return False, f"❌ Error running 'verdi computer list -a': {e.stderr}",active_computers,not_active_computers
+
+    result_msg += f"✅ Active AiiDA computers: {', '.join(active_computers)}\n"
+    result_msg += f"⬜ Not active AiiDA computers: {', '.join(not_active_computers)}\n"
+    return True,result_msg,active_computers,not_active_computers
+
+def aiida_codes():
+    result_msg = ""
+    all_codes = set()
+    codes = set()
+
+    try:
+        result = subprocess.run(["verdi", "code", "list", "-a"], capture_output=True, text=True, check=True)
+        lines = result.stdout.splitlines()
+        all_codes = {line.split()[0] for line in lines if "@" in line}
+    except subprocess.CalledProcessError as e:        
+        return False, f"❌ Error running 'verdi code list -a': {e.stderr}",set(),set()
+    
+    
+    try:
+        result = subprocess.run(["verdi", "code", "list"], capture_output=True, text=True, check=True)
+        lines = result.stdout.splitlines()
+        codes = {line.split()[0] for line in lines if "@" in line}
+    except subprocess.CalledProcessError as e:        
+        return False, f"❌ Error running 'verdi code list': {e.stderr}",set(),set() 
+    
+    not_active_codes = all_codes - codes
+        
+    result_msg += f"✅ Active AiiDA codes: {', '.join(codes)}\n"
+    result_msg += f"⬜ Not active AiiDA codes: {', '.join(not_active_codes)}\n"
+    return True,result_msg,codes,not_active_codes
+
+def process_aiida_configuration(configuration_file, config_path):
+    """
+    Reads the YAML configuration file, renames the existing SSH config, 
+    creates a new SSH config from the YAML file, and checks installed vs. missing AiiDA computers.
+    
+    :param configuration_file: Path to the YAML configuration file.
+    :param config_path: Path to the SSH config directory.
+    :return: Formatted string with the results.
+    """
+    updates_needed={}
+    # Convert to Path objects
+    configuration_file = Path(configuration_file)
+    config_path = Path(config_path)
+    
+    # Ensure config_path exists
+    config_path.mkdir(parents=True, exist_ok=True)
+
+    # Define file paths
+    config_file = config_path / "config"
+    old_config_file = config_path / "old_config"
+
+    result_msg = ""
+
+    # Step 1: Read the YAML configuration file
+    with open(configuration_file, "r") as file:
+        config = yaml.safe_load(file)
+
+    # Step 2: Rename 'config' to 'old_config' if it exists
+    if config_file.exists():
+        shutil.move(config_file, old_config_file)
+        result_msg += f"✅ Renamed {config_file} → {old_config_file}\n"
+
+    # Step 3: Extract 'ssh_config' from YAML and write it to 'config'
+    ssh_config_data = config.get("ssh_config", "")
+    
+    with open(config_file, "w") as file:
+        file.write(ssh_config_data + "\n")  # Ensure a newline at the end
+
+    result_msg += f"✅ Created new SSH config at {config_file}\n"
+
+    # Get the list of active and not-active AiiDA computers
+    status_computers,msg,active_computers,not_active_computers = aiida_computers()
+    result_msg +=msg
+    # Get the list of active and not-active AiiDA codes
+    status_codes,msg,active_codes,not_active_codes = aiida_codes()
+    result_msg +=msg
+    if not (status_computers and status_codes):
+        return False,result_msg + msg,{}
+                           
+        
+    # Step 5: Check if each defined computer exists in AiiDA and is up-to-date
+    defined_computers = config.get("computers", {})
+
+    # Checking computers
+    for comp, comp_data in defined_computers.items():
+        if comp in active_computers:
+            result_msg += f"✅ Computer '{comp}' is already installed in AiiDA.\n"
+            is_up_to_date, msg = compare_computer_configuration(comp, comp_data)
+            result_msg += msg
+            if not is_up_to_date:  # Only add to updates_needed if not up-to-date
+                updates_needed.setdefault('computers', {})[comp] = {'rename': True}
+
+        elif comp in not_active_computers:
+            result_msg += f"⬜ Computer '{comp}' is listed but NOT active in AiiDA.\n"
+            updates_needed.setdefault('computers', {})[comp] = {'rename': True}
+
+        else:
+            result_msg += f"❌ Computer '{comp}' is completely missing from AiiDA.\n"
+            updates_needed.setdefault('computers', {})[comp] = {'rename': False}
+
+    # Checking codes
+    defined_codes = config.get("codes", {})
+
+    for code, code_data in defined_codes.items():
+        computer = code_data['computer']
+        computer_up_to_date = computer not in updates_needed
+        code_label = code_data['label']
+
+        # Default: No update needed
+        msg = f"✅ Code {code_label} is already installed in AiiDA.\n"
+
+        if computer_up_to_date:  # Computer is up-to-date, check renaming needs
+            if f"{code_label}@{computer}" in active_codes:
+                if not compare_code_configuration(code_data):
+                    updates_needed.setdefault('codes', {})[code] = {'rename': True}
+                    msg = f"⚠️ Code {code} is already installed in AiiDA but is old. Will be renamed and reinstalled\n"
+            elif f"{code_label}@{computer}" in not_active_codes:  # Rare case: inactive code with the same name
+                updates_needed.setdefault('codes', {})[code] = {'rename': True}
+                msg = f"⚠️ Code {code_label} is already installed (not active) in AiiDA but is old. Will be renamed and reinstalled\n"
+            else:
+                updates_needed.setdefault('codes', {})[code] = {'rename': False}
+                msg = f"⬜ Code {code_label} will be installed  {computer} is present.\n"
+        else: #I will install the computer thus teh code and teh code does not have to be renamed
+            updates_needed.setdefault('codes', {})[code] = {'rename': False}
+            msg = f"⬜ Code {code_label} will be installed after installation of {computer}. No need to rename.\n"
+
+        result_msg += msg   
+        
+
+    return True,result_msg,updates_needed
+
 def check_for_updates():
-    """Check if there is a new update available."""
+    """Check if there is a new update available and pull changes if necessary."""
+    
+    # Ensure the repository exists
+    if not os.path.exists(GIT_REPO_PATH):
+        if not clone_repository():
+            return "<b style='color:red;'>❌ Failed to clone the repository. Please check your configuration.</b>"
+    
     local_commit = get_local_commit()
     remote_commit = get_latest_remote_commit()
+    
     if not local_commit or not remote_commit:
-        return "<b style='color:red;'>❌ Unable to check for updates.</b>"
+        return "<b style='color:red;'>❌ Unable to check for updates.</b>",{}
 
     if local_commit != remote_commit:
-        return "<b style='color:orange;'>🔄 A new update is available. Please apply updates.</b>"
+        if not pull_latest_changes():
+            return "<b style='color:red;'>❌ Failed to update the repository.</b>",{}
+    
+    status,msg,updates_needed = process_aiida_configuration(configuration_file, config_path)
+    if not status:
+        return msg,{}
+    if not updates_needed:
+        return "<b style='color:green;'>✅ Your configuration is up to date.</b>",{}
     else:
-            return "<b style='color:green;'>✅ Your configuration is up to date.</b>"
+        return msg,updates_needed
 
 def process_yml_files(yml_files):
     """
@@ -126,20 +444,6 @@ def process_yml_files(yml_files):
         except Exception as e:
             print(f"Error processing {yml_file}: {e}")
 
-
-yml_files_to_reset = [
-    'cp2k.yml',
-    "phonopy.yml",
-    "python.yml",
-    "critic2.yml",
-    'pw.yml',
-    'pp.yml',
-    'dos.yml',
-    'projwfc.yml',
-    'stm.yml',
-    'overlap.yml',    
-]
-#process_yml_files(yml_files_to_reset)
 
 def run_command(command, ssh=False, max_retries=5, remotehost=None):
     """
@@ -193,21 +497,20 @@ def run_command(command, ssh=False, max_retries=5, remotehost=None):
 
 
 # clone repository
-def clone_repo(home_dir,repo_name):
-    mydir = "/home/jovyan/"  # Directory containing the repo
-    repo_path = os.path.join(home_dir, repo_name)
-
-    if not os.path.isdir(repo_path):  # Check if the directory exists
-        print(f"Cloning {repo_url} into {repo_path}...")
-        commnad_out,command_ok = run_command(f"cd {home_dir} && git clone {repo_url}", ssh=False)
-        if not command_ok:
-            return
-    else:
-        print(f"Repository {repo_name} exists, pulling latest changes...")
-        commnad_out,command_ok = run_command(f"cd {repo_path} && git reset --hard HEAD && git pull", ssh=False)
-        if not command_ok:
-            return
-    return
+#def clone_repo(target_dir,repo_name):
+#    repo_path = os.path.join(target_dir, repo_name)
+#
+#    if not os.path.isdir(repo_path):  # Check if the directory exists
+#        #print(f"Cloning {GIT_URL} into {repo_path}...")
+#        commnad_out,command_ok = run_command(f"cd {target_dir} && git clone {GIT_URL}", ssh=False)
+#        if not command_ok:
+#            return
+#    else:
+#        print(f"Repository {repo_name} exists, pulling latest changes...")
+#        commnad_out,command_ok = run_command(f"cd {repo_path} && git reset --hard HEAD && git pull", ssh=False)
+#        if not command_ok:
+#            return
+#    return
 
 # Function to load YAML file as a dictionary
 def load_yaml(file_path):
@@ -297,13 +600,6 @@ def update_yml_files(cscs_username, cscs_account, alps_files, yml_files):
 
     print("✅ File updates complete.")
 
-# Example usage
-
-# Define computer label and file paths
-config_file = "config.yml"
-setup_file = "setup.yml"
-ref_config = alps_files + "alps_config.yml"
-ref_setup = alps_files + "alps_setup.yml"
 
 def check_install_computer():
     install_computer = True
@@ -607,3 +903,113 @@ fi"""
     return True
 
 
+#### CHECK for old unfinished Workchains
+def first_caller(node_pk, max_calls=5000):
+    """
+    Traces back to the first caller (root node) of a given node.
+    
+    :param node_pk: The PK of the node.
+    :param max_calls: Maximum recursion depth to prevent infinite loops.
+    :return: PK of the first caller.
+    """
+    num_calls = 0
+    caller = node_pk
+    while num_calls < max_calls:
+        try:
+            caller = load_node(caller).caller.pk
+        except AttributeError:
+            break  # No more parents, stop tracing
+        num_calls += 1
+    return caller
+
+def get_structuredata_descendants(parent_pk):
+    """
+    Returns all StructureData nodes that are descendants of a given node.
+    
+    :param parent_pk: The PK of the parent node (e.g., WorkChain PK).
+    :return: A list of StructureData node PKs.
+    """
+    qb = QueryBuilder()
+    qb.append(Node, filters={'id': parent_pk}, tag='parent')
+    qb.append(
+        StructureData, 
+        with_ancestors='parent',  # Search for descendants
+        project=['id']  # Retrieve PKs only
+    )
+    return [entry[0] for entry in qb.all()]
+
+def get_processes_with_structuredata_input(structure_pks):
+    """
+    Returns all CalcJob, WorkChain, and CalcFunction nodes that have 
+    a given StructureData node as an input.
+    
+    :param structure_pks: List of StructureData PKs.
+    :return: A list of process node PKs.
+    """
+    if not structure_pks:
+        return []
+    
+    qb = QueryBuilder()
+    qb.append(StructureData, filters={'id': {'in': structure_pks}}, tag='structure')
+    qb.append(
+        Node, 
+        with_incoming='structure',  # Find nodes that receive the StructureData as input
+        filters={'node_type': {'in': [
+            'process.calculation.calcjob.CalcJobNode.',
+            'process.workflow.workchain.WorkChainNode.',
+            'process.calculation.function.CalcFunctionNode.'
+        ]}},
+        project=['id']  # Retrieve PKs only
+    )
+    return [entry[0] for entry in qb.all()]
+
+def safe_to_delete(workchain_pk):
+    """
+    Determines if a WorkChainNode can be safely deleted.
+    
+    :param workchain_pk: The PK of the WorkChainNode.
+    :return: True if it can be safely removed, False otherwise.
+    """
+    structure_pks = get_structuredata_descendants(workchain_pk)
+    calcjobs = get_processes_with_structuredata_input(structure_pks)
+    
+    for job in calcjobs:
+        if first_caller(job) != workchain_pk:
+            return False
+    return True
+
+def get_old_unfinished_workchains():
+    """
+    Returns a formatted message with all WorkChainNodes that are older than 30 days and unfinished.
+    
+    :return: HTML formatted message with green (✅) and red (❌) indicators.
+    """
+    if not load_profile():
+        load_profile("default")
+    cutoff_date = datetime.now() - timedelta(days=30)
+    
+    qb = QueryBuilder()
+    qb.append(
+        WorkChainNode, 
+        filters={
+            'ctime': {'<': cutoff_date},  # Created more than 30 days ago
+            'attributes.process_state': {'!in': ['finished', 'excepted', 'killed']}  # Not finished
+        },
+        project=['id']  # Retrieve PKs only
+    )
+    
+    old_unfinished = [entry[0] for entry in qb.all()]
+    if not old_unfinished:
+        return "<h2 style='color: green;'>✅ No old unfinished WorkChainNodes found.</h2>"
+    
+    msg = "<h2 style='color: darkorange;'>⚠️ Found old unfinished WorkChains</h2>"
+    msg += "<p>Ask for help if you are unsure about removing them.</p><ul>"
+    
+    for pk in old_unfinished:
+        if safe_to_delete(pk):
+            msg += f"<li style='color: green;'>✅ WorkChain <strong>PK {pk}</strong> can be safely removed.</li>"
+        else:
+            msg += f"<li style='color: red;'>❌ WorkChain <strong>PK {pk}</strong> cannot be safely removed.</li>"
+    
+    msg += "</ul>"
+    return msg

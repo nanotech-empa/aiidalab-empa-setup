@@ -4,7 +4,7 @@ from datetime import datetime
 from utils.config import * 
 __version__ = "v2025.0214"
 
-class ConfigAiiDAlabApp(ipw.VBox):  # ✅ Correct inheritance
+class ConfigAiiDAlabApp(ipw.VBox): 
     def __init__(self):
         self.title = ipw.HTML("<h2>Config AiiDAlab Application</h2>")
 
@@ -28,6 +28,7 @@ class ConfigAiiDAlabApp(ipw.VBox):  # ✅ Correct inheritance
         )
         
         self.update_message = ipw.HTML("Nothing to report")
+        self.update_old_workchains = ipw.HTML("")
 
         # Checkbox for QE Postprocess
         self.qe_postprocess_checkbox = ipw.Checkbox(value=False, description="QE Postprocess")
@@ -35,34 +36,45 @@ class ConfigAiiDAlabApp(ipw.VBox):  # ✅ Correct inheritance
         # Start button
         self.start_button = ipw.Button(description="Start", button_style="primary")
         self.start_button.on_click(self.run_configuration)
+
         # Clear button
         self.clear_button = ipw.Button(description="Clear", button_style="warning") 
         self.clear_button.on_click(self.clear_output)
-        
 
         # Output display
-        self.subtitle=ipw.HTML("")
+        self.subtitle = ipw.HTML("")
         self.output = ipw.Output()
-        
 
-        # ✅ Call VBox constructor directly instead of assigning self.layout
+        # Call VBox constructor directly
         super().__init__([
             self.title,
-            self.update_message,
+            self.update_old_workchains,  # Display updates for old workchains
+            self.update_message,  # Display general updates
             self.username_widget,
             self.account_widget,
             self.qe_postprocess_checkbox,
-            ipw.HBox([self.start_button,self.clear_button]),
+            ipw.HBox([self.start_button, self.clear_button]),
             self.subtitle,
             self.output
         ])
-        asyncio.ensure_future(self._start_periodic_check(3))
+
+        # Start periodic checks
+        asyncio.create_task(self._start_periodic_check_updates(120))
+        asyncio.create_task(self._start_periodic_check_old_workchains(120))
         
-    async def _start_periodic_check(self, interval):
+    async def _start_periodic_check_updates(self, interval):
         """Periodically check for updates."""
         while True:
-            update_result = await asyncio.to_thread(check_for_updates)
-            self.update_message.value = datetime.now().strftime("%Y-%m-%d %H:%M:%S") +'  '+ update_result
+            msg,self.updates_needed = await asyncio.to_thread(check_for_updates)
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self.update_message.value = f"<b>{timestamp}</b>: {msg}"
+            await asyncio.sleep(interval)
+
+    async def _start_periodic_check_old_workchains(self, interval):
+        """Periodically check for pending too old workchains."""
+        while True:
+            update_result = await asyncio.to_thread(get_old_unfinished_workchains)
+            self.update_old_workchains.value = f"<b>Old WorkChains Check:</b> {update_result}"
             await asyncio.sleep(interval)
                    
     def clear_output(self,_):
@@ -79,12 +91,12 @@ class ConfigAiiDAlabApp(ipw.VBox):  # ✅ Correct inheritance
             cscs_username = self.username_widget.value
             cscs_account = self.account_widget.value
             # clone repository
-            clone_repo(home_dir,repo_name)
+            clone_repo(target_dir,repo_name)
         self.output.clear_output()
         self.subtitle.value = "<h3>Check AiiDA daint.alps computer</h3>"
         with self.output:
             # set username in yml files
-            update_yml_files(cscs_username, cscs_account, alps_files, yml_and_config_files)
+            update_yml_files(cscs_username, cscs_account)
             
             # check if we have to install teh new computer
             need_to_install = check_install_computer()
