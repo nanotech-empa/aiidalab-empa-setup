@@ -1,7 +1,7 @@
 import asyncio
 import ipywidgets as ipw
 from datetime import datetime
-from utils.config import * 
+from utils.control import * 
 __version__ = "v2025.0214"
 
 class ConfigAiiDAlabApp(ipw.VBox): 
@@ -59,15 +59,15 @@ class ConfigAiiDAlabApp(ipw.VBox):
         ])
 
         # Start periodic checks
-        asyncio.create_task(self._start_periodic_check_updates(120))
-        asyncio.create_task(self._start_periodic_check_old_workchains(120))
+        asyncio.create_task(self._start_periodic_check_updates(7200))
+        asyncio.create_task(self._start_periodic_check_old_workchains(7200))
         
     async def _start_periodic_check_updates(self, interval):
         """Periodically check for updates."""
         while True:
-            msg,self.updates_needed = await asyncio.to_thread(check_for_updates)
+            msg,self.updates_needed,self.config = await asyncio.to_thread(check_for_updates)
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            self.update_message.value = f"<b>{timestamp}</b>: {msg}"
+            self.update_message.value = f"<b>{timestamp}</b>: {remove_green_check_lines(msg)}"
             await asyncio.sleep(interval)
 
     async def _start_periodic_check_old_workchains(self, interval):
@@ -90,23 +90,17 @@ class ConfigAiiDAlabApp(ipw.VBox):
                 return
             cscs_username = self.username_widget.value
             cscs_account = self.account_widget.value
-            # clone repository
-            clone_repo(target_dir,repo_name)
-        self.output.clear_output()
-        self.subtitle.value = "<h3>Check AiiDA daint.alps computer</h3>"
-        with self.output:
-            # set username in yml files
-            update_yml_files(cscs_username, cscs_account)
             
-            # check if we have to install teh new computer
-            need_to_install = check_install_computer()
-            if need_to_install:
-                setup_new_alps()
-            else:
-                print("✅ Skipping installation of new computer and the installed computer does not need to be relabeled")
-            run_command(config_command(cscs_username),ssh=False)
+        self.output.clear_output()        
+        self.subtitle.value = "<h3>Setup SSH config file. Check SSH connection.</h3>"
+        with self.output:
+            self.output.clear_output()
+            if "ssh_config" in self.updates_needed:
+                update_ssh_config(config_path,self.config['ssh_config'],self.username_widget.value,rename=self.updates_needed['ssh_config']['rename'])
+                set_ssh(self.config['computers'],self.updates_needed['ssh_config']['hosts'])
+                                    
         self.output.clear_output()
-        self.subtitle.value = "<h3>Check/Setup SSH </h3>"
+        self.subtitle.value = "<h3>Check SHH connection</h3>"
         with self.output:
             if not set_ssh(cscs_username):
                 print("❌ ssh problem, ask for support")

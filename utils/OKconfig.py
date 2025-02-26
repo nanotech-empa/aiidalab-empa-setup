@@ -27,8 +27,11 @@ GIT_REMOTE = "origin"
 BRANCH = "main"
 
 # labels to rename old host and codes
-def relabel(label,host=False):
-    return datetime.now().strftime("%Y%m%d%H%M")+'_'+label if host else datetime.now().strftime("%Y%m%d%H%M")+'_'
+def relabel(label):
+    """Assumes that in case @ is present it is a code and keeps only the portion preceding @ """
+    before_at, at, after_at = label.partition('@')
+    return datetime.now().strftime("%Y%m%d%H%M")+'_'+before_at
+        
 
 def clone_repository():
     """Clone the repository if it does not exist."""
@@ -165,8 +168,12 @@ def compare_computer_configuration(computer_name, stored_computer_data):
     config_export_file = "config.yml"
 
     try:
-        subprocess.run(["verdi", "computer", "export", "setup", computer_name, setup_export_file], check=True)
-        subprocess.run(["verdi", "computer", "export", "config", computer_name, config_export_file], check=True)
+        subprocess.run(["verdi", "computer", "export", "setup", computer_name, setup_export_file], check=True,
+            stdout=subprocess.DEVNULL,  # Suppress standard output
+            stderr=subprocess.DEVNULL)
+        subprocess.run(["verdi", "computer", "export", "config", computer_name, config_export_file], check=True,
+            stdout=subprocess.DEVNULL,  # Suppress standard output
+            stderr=subprocess.DEVNULL)
     except subprocess.CalledProcessError as e:
         return False, f"❌ Error exporting AiiDA computer setup/config: {e.stderr}"
 
@@ -198,7 +205,9 @@ def compare_code_configuration(stored_code_data):
     computer = stored_code_data['computer']
     code_label = stored_code_data['label']
     try:
-        subprocess.run(["verdi", "code", "export", f"{code_label}@{computer}", "export.yml"], check=True)
+        subprocess.run(["verdi", "code", "export", f"{code_label}@{computer}", "export.yml"], check=True,
+            stdout=subprocess.DEVNULL,  # Suppress standard output
+            stderr=subprocess.DEVNULL)
     except subprocess.CalledProcessError as e:
         return False, f"❌ Error exporting AiiDA code setup: {e.stderr}"
 
@@ -268,6 +277,55 @@ def aiida_codes():
     result_msg += f"⬜ Not active AiiDA codes: {', '.join(not_active_codes)}\n"
     return True,result_msg,codes,not_active_codes
 
+def check_ssh_config(config_path, config_from_yaml):
+    config_file = config_path / "config"
+    
+    # Read the content of the config file
+    try:
+        with open(config_file, "r") as f:
+            config_content = f.read()
+    except FileNotFoundError:
+        return False, f"Config file {config_file} not found. I will create it.\n"
+    
+    for computer, details in config_from_yaml.items():
+        setup = details.get("setup", {})
+        config = details.get("config", {})
+
+        hostname = setup.get("hostname")
+        proxy_jump = "Host " + config.get("proxy_jump", "")
+
+        # Check if hostname is in the config file
+        hostname_check = hostname in config_content if hostname else False
+        proxy_check = proxy_jump in config_content if proxy_jump else True  # Skip if empty
+
+        if not (hostname_check and proxy_check):
+            return False,f"{hostname} not properly configured in .ssh/config. Overwriting config"
+    
+    return True, "The .ssh/config seems to be OK"
+
+def update_ssh_config(config_path,rename=True):
+    
+    # Ensure config_path exists
+    config_path.mkdir(parents=True, exist_ok=True)
+
+    # Define file paths
+    config_file = config_path / "config"
+    old_config_file = config_path / relabel("config") 
+
+    result_msg = ""
+    
+    ssh_config_data = config.get("ssh_config", "")  
+    if rename:
+        shutil.move(config_file, old_config_file)
+        result_msg += f"✅ Renamed {config_file} → {old_config_file}\n"
+
+    with open(config_file, "w") as file:
+        file.write(ssh_config_data + "\n")  # Ensure a newline at the end
+
+    result_msg += f"✅ Created new SSH config at {config_file}\n"
+    return True,result_msg
+    
+
 def process_aiida_configuration(configuration_file, config_path):
     """
     Reads the YAML configuration file, renames the existing SSH config, 
@@ -281,33 +339,21 @@ def process_aiida_configuration(configuration_file, config_path):
     # Convert to Path objects
     configuration_file = Path(configuration_file)
     config_path = Path(config_path)
-    
-    # Ensure config_path exists
-    config_path.mkdir(parents=True, exist_ok=True)
-
-    # Define file paths
-    config_file = config_path / "config"
-    old_config_file = config_path / "old_config"
-
     result_msg = ""
-
-    # Step 1: Read the YAML configuration file
+    
+    # Read the YAML configuration file
     with open(configuration_file, "r") as file:
         config = yaml.safe_load(file)
-
-    # Step 2: Rename 'config' to 'old_config' if it exists
-    if config_file.exists():
-        shutil.move(config_file, old_config_file)
-        result_msg += f"✅ Renamed {config_file} → {old_config_file}\n"
-
-    # Step 3: Extract 'ssh_config' from YAML and write it to 'config'
-    ssh_config_data = config.get("ssh_config", "")
     
-    with open(config_file, "w") as file:
-        file.write(ssh_config_data + "\n")  # Ensure a newline at the end
-
-    result_msg += f"✅ Created new SSH config at {config_file}\n"
-
+    # Check ssh_config
+    config_ok,msg = check_ssh_config(config_path, config['computers'])
+    result_msg +=msg
+    if not config_ok:
+        if 'Overwriting' in msg:
+            updates_needed.setdefault('ssh_config', {})['rename'] =  True
+        else:
+            updates_needed.setdefault('ssh_config', {})['rename'] =  False
+        
     # Get the list of active and not-active AiiDA computers
     status_computers,msg,active_computers,not_active_computers = aiida_computers()
     result_msg +=msg
@@ -318,7 +364,7 @@ def process_aiida_configuration(configuration_file, config_path):
         return False,result_msg + msg,{}
                            
         
-    # Step 5: Check if each defined computer exists in AiiDA and is up-to-date
+    # Check if each defined computer exists in AiiDA and is up-to-date
     defined_computers = config.get("computers", {})
 
     # Checking computers
@@ -365,6 +411,7 @@ def process_aiida_configuration(configuration_file, config_path):
             msg = f"⬜ Code {code_label} will be installed after installation of {computer}. No need to rename.\n"
 
         result_msg += msg   
+    # To do: Check if cusntom app installations are needed
         
 
     return True,result_msg,updates_needed
