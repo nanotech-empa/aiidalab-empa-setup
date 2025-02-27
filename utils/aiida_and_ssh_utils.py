@@ -128,7 +128,6 @@ def aiida_codes():
         return False, f"❌ Error running 'verdi code list': {e.stderr}",set(),set() 
     
     not_active_codes = all_codes - codes
-    codes = codes
         
     result_msg += f"✅ Active AiiDA codes:<br> {'<br>'.join([code[0] + ' PK: ' + str(code[1]) for code in codes])}"
 
