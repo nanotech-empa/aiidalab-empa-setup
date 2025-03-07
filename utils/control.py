@@ -11,33 +11,33 @@ from aiida.orm import load_node
 from aiida.orm import QueryBuilder, WorkChainNode, StructureData, Node
 
 #ssh_config_data = config.get("ssh_config", "")
-def check_for_updates():
+def check_for_updates(selected_grant=''):
     """Check if there is a new update available and pull changes if necessary."""
     
     # Ensure the repository exists
     if not os.path.exists(GIT_REPO_PATH):
         if not clone_repository():
-            return "<b style='color:red;'>❌ Failed to clone the repository. Please check your configuration.</b>"
+            return "<b style='color:red;'>❌ Failed to clone the repository. Please check your configuration.</b>",{},{}
     
     local_commit = get_local_commit()
     remote_commit = get_latest_remote_commit()
     
     if not local_commit or not remote_commit:
-        return "<b style='color:red;'>❌ Unable to check for updates.</b>",{}
+        return "<b style='color:red;'>❌ Unable to check for updates.</b>",{},{}
 
     if local_commit != remote_commit:
         if not pull_latest_changes():
-            return "<b style='color:red;'>❌ Failed to update the repository.</b>",{}
+            return "<b style='color:red;'>❌ Failed to update the repository.</b>",{},{}
     
-    status,msg,updates_needed,config = process_aiida_configuration(configuration_file, config_path)
+    status,msg,updates_needed,config = process_aiida_configuration(configuration_file, config_path,selected_grant)
     if not status:
-        return msg,{}
+        return msg,{},config
     if not updates_needed:
-        return "<b style='color:green;'>✅ Your configuration is up to date.</b>",{}
+        return "<b style='color:green;'>✅ Your configuration is up to date.</b>",{},config
     else:
         return msg,updates_needed,config
     
-def process_aiida_configuration(configuration_file, config_path):
+def process_aiida_configuration(configuration_file, config_path,selected_grant):
     """
     Reads the YAML configuration file, renames the existing SSH config, 
     creates a new SSH config from the YAML file, and checks installed vs. missing AiiDA computers.
@@ -55,6 +55,10 @@ def process_aiida_configuration(configuration_file, config_path):
     # Read the YAML configuration file
     with open(configuration_file, "r") as file:
         config = yaml.safe_load(file)
+        
+    if selected_grant == '':
+        return False, "<b style='color:red;'>⬜  Please select a grant to enable checking.</b>",{},config
+    
     # Check ssh_config
     config_ok,msg,config_hosts = check_ssh_config(config_path, config['computers'])
     result_msg +=msg
@@ -78,51 +82,70 @@ def process_aiida_configuration(configuration_file, config_path):
     # Check if each defined computer exists in AiiDA and is up-to-date
     defined_computers = config.get("computers", {})
 
-    # Checking computers
+    # Checking for olld grants
+    defined_grants = [grant for grants_list in config["grants"].values() for grant in grants_list]
+    for computer in active_computers:
+        if computer != 'localhost':
+            its_grant = computer.split('_')[-1]
+            if its_grant not in defined_grants:
+                result_msg += f"⚠️ Computer '{computer}' is installed in AiiDA but its grant '{its_grant}' is not defined in the configuration file.<br>"
+                updates_needed.setdefault('computers', {})[computer] = {'hide':True,'rename': False,'install':False}
+
+    # Checking computers loop over grants
     for comp, comp_data in defined_computers.items():
-        if comp in active_computers:
-            result_msg += f"✅ Computer '{comp}' is already installed in AiiDA.<br>"
-            is_up_to_date, msg = compare_computer_configuration(comp, comp_data)
-            result_msg += msg
-            if not is_up_to_date:  # Only add to updates_needed if not up-to-date
-                updates_needed.setdefault('computers', {})[comp] = {'rename': True}
+        for grant in defined_grants:
+            full_comp = f"{comp}_{grant}"
+            if grant == selected_grant:
+                install_this = True
+            else:
+                install_this = False
+            if full_comp in active_computers:
+                result_msg += f"⬜ Computer '{full_comp}' is already installed in AiiDA, checking for its configuration.<br>"
+                is_up_to_date, msg = compare_computer_configuration(full_comp, comp_data)
+                result_msg += msg
+                if not is_up_to_date:  # Only add to updates_needed if not up-to-date
+                    updates_needed.setdefault('computers', {})[full_comp] = {'hide':True,'rename': True,'install':install_this}
 
-        elif comp in not_active_computers:
-            result_msg += f"⬜ Computer '{comp}' is listed but NOT active in AiiDA.<br>"
-            updates_needed.setdefault('computers', {})[comp] = {'rename': True}
+            elif full_comp in not_active_computers:
+                result_msg += f"⬜ Computer '{full_comp}' is listed but NOT active in AiiDA.<br>"
+                updates_needed.setdefault('computers', {})[full_comp] = {'hide':False,'rename': True,'install':install_this}
 
-        else:
-            result_msg += f"❌ Computer '{comp}' is completely missing from AiiDA.<br>"
-            updates_needed.setdefault('computers', {})[comp] = {'rename': False}
+            else: #here distinguish between all grants and selected grant
+                if grant in config['grants'][comp] and install_this:
+                    result_msg += f"❌ Computer '{full_comp}' is completely missing from AiiDA.<br>"
+                    updates_needed.setdefault('computers', {})[full_comp] = {'hide':False,'rename': False,'install':install_this}
 
     # Checking codes
     defined_codes = config.get("codes", {})
 
-    for code, code_data in defined_codes.items():
-        computer = code_data['computer']
-        computer_up_to_date = computer not in updates_needed
-        code_label = code_data['label']
+    # Check if each defined code exists in AiiDA and is up-to-date
+    # in the yaml configuration a code definition also include the computer
+    
+    # To do. loop on active codes with grant that is old, --> hide
+    for _, code_data in defined_codes.items(): 
+        computer = code_data['computer']+f"_{selected_grant}"
+        computer_up_to_date = computer not in updates_needed.get('computers', {})
+        code_label = f"{code_data['label']}@{computer}"
 
         # Default: No update needed
-        msg = f"✅ Code {code_label} is already installed in AiiDA.<br>"
+        msg = f"✅ Code {code_label}@{computer} is already installed in AiiDA.<br>"
 
         if computer_up_to_date:  # Computer is up-to-date, check renaming needs
-            #if any(item[0] == 'b' for item in my_set):
             code_pk = next((pk for codename, pk in active_codes if codename == f"{code_label}@{computer}"), None)
             if code_pk is not None:
-                if not compare_code_configuration(code_data):
-                    updates_needed.setdefault('codes', {})[code] = {'rename': code_pk}
-                    msg = f"⚠️ Code {code} is already installed in AiiDA but is old. Will be renamed and reinstalled.<br>"
+                if not compare_code_configuration(code_label,code_data):
+                    updates_needed.setdefault('codes', {})[code_label] = {'rename': code_pk,'install':True}
+                    msg = f"⚠️ Code {code_label} is already installed in AiiDA but is old. Will be renamed and reinstalled.<br>"
             else:
                 code_pk = next((pk for codename, pk in not_active_codes if codename == f"{code_label}@{computer}"), None)
                 if code_pk is not None:
-                    updates_needed.setdefault('codes', {})[code] = {'rename': code_pk}
+                    updates_needed.setdefault('codes', {})[code_label] = {'rename': code_pk,'install':True}
                     msg = f"⚠️ Code {code_label} is already installed (not active) in AiiDA but is old. Will be renamed and reinstalled.<br>"
                 else:
-                    updates_needed.setdefault('codes', {})[code] = {'rename': False}
+                    updates_needed.setdefault('codes', {})[code_label] = {'rename': False,'install':True}
                     msg = f"⬜ Code {code_label} will be installed  {computer} is present.<br>"
         else: #I will install the computer thus the code does not have to be renamed
-            updates_needed.setdefault('codes', {})[code] = {'rename': False}
+            updates_needed.setdefault('codes', {})[code_label] = {'rename': False,'install':True}
             msg = f"⬜ Code {code_label} will be installed after installation of {computer}. No need to rename.<br>"
 
         result_msg += msg   
@@ -131,26 +154,124 @@ def process_aiida_configuration(configuration_file, config_path):
 
     return True,result_msg,updates_needed,config
 
-
-def setup_codes(codes_to_setup,defined_codes):
+def setup_computers(computers_to_setup,defined_computers,account=None):
+    for computer in computers_to_setup:
+        computer_name = computer.split('_')[0]
+        _, _, grant = computer.partition('_') # gives '' if no _ is found
+        print(f"🔄 Setting up computer '{computer_name}' with grant {grant} as {computer}")
+        status = setup_aiida_computer(computer, defined_computers[computer_name],hide=computers_to_setup[computer].get('hide',False),
+                             torelabel=computers_to_setup[computer].get('rename',False),
+                             install=computers_to_setup[computer].get('install',False),
+                             grant=grant
+                             )
+    return status
+def setup_codes(codes_to_setup,config):
+    defined_codes = config.get("codes", {})
     uenvs=[]
-    for code ,code_data in defined_codes.items():
-        if code in codes_to_setup:
-            label = code_data.get("label")
-            prepend_text = code_data.get("prepend_text", "")  # Get the `prepend_text` field
-            # Use regex to find the value of `--uenv=`
-            match = re.search(r"#SBATCH --uenv=([\w\-/.:]+)", prepend_text)
-            if match:
-                uenv_value = match.group(1)  # Extract matched value
-                print(f"Need uenv: {uenv_value} for '{label}'")
-                if uenv_value not in uenvs:
-                    uenvs.append(uenv_value)
-            else:
-                print(f"No uenv needed for '{label}'")
-                
-            setup_aiida_code(code, code_data,defined_codes['hide'])
+    for full_code in codes_to_setup:
+        # pw-7.4:v2@daint.alps_s1267
+        code = full_code.split('@')[0].split('-')[0] # pw
+        code_data = defined_codes[code]
+        computer = code_data['computer']
+        hostname = config['computers'][computer]['setup']['hostname']
+        prepend_text = code_data.get("prepend_text", "")
+        match = re.search(r"#SBATCH --uenv=([\w\-/.:]+)", prepend_text)
+        if match:
+            uenv_value = match.group(1)  # Extract matched value
+            print(f"⬜  Need uenv: {uenv_value} for '{full_code}'")
+            if uenv_value not in uenvs:
+                uenvs.append((hostname,uenv_value))
+        else:
+            print(f"✅ No uenv needed for '{full_code}'")
+            
+        status = setup_aiida_code(full_code, code_data,hide=codes_to_setup[full_code].get('hide',False),
+                            relabel=codes_to_setup[full_code].get('rename',False),
+                            install=codes_to_setup[full_code].get('install',False))
+        
+            
 
-    return uenvs
+    return status,uenvs
+
+# Manage uenvs
+
+def manage_uenv_images(uenvs):
+    """
+    Ensure that required uenv images are available on a remote host.
+    
+    :param remote_host: The remote machine where commands will be executed.
+    :param uenvs: A list of required uenv images (e.g., ['cp2k/2024.3:v2', 'qe/7.4:v2'])
+    """
+
+    # Step 1: Check if the uenv repo exists, if not, create it
+    hosts = {uenv[0] for uenv in uenvs}
+    for remotehost in hosts:
+        print("🔍 Checking UENV repository status on {remotehost}")
+        command = ["ssh", remotehost, "uenv", "repo", "status"]
+        repo_status, command_ok = run_command(command)
+        if not command_ok:
+            print(f"❌ Failed to check UENV repo status on {remotehost}. Exiting.")
+            return False
+        
+        if "not found" in repo_status.lower() or not repo_status or "no repository" in repo_status.lower() :
+            print(f"⚠️ UENV repo not found. Creating repository...")
+            command = ["ssh", remotehost, "uenv", "repo", "create"]
+            command_out, command_ok = run_command(command)
+            if not command_ok:
+                print(f"❌ Failed to create UENV repo on {remotehost}. Exiting.")
+                return False
+        else:
+            print("✅ UENV repo is available on {remotehost}.")
+
+    # Step 2: Get the list of images available to the user
+    available_images = {}
+    for remotehost in hosts:
+        print(f"🔍 Fetching available UENV images on {remotehost} for the user ")
+        command = ["ssh", remotehost, "uenv", "image", "ls"]
+        command_out, command_ok = run_command(command)
+        print(command_out)
+        print(extract_first_column(command_out))
+        if not command_ok:
+            print(f"❌ Failed to fetch UENV images on {remotehost}. Exiting.")
+            return False
+        available_images.setdefault(remotehost,{})['user'] = extract_first_column(command_out)
+
+        # Step 3: Get the list of all images available on the system
+        print("🔍 Fetching available UENV images (system-wide)")
+        
+        command = ["ssh", remotehost, "uenv", "image", "find"]
+        command_out, command_ok = run_command(command)
+        if not command_ok:
+            print("❌ Failed to fetch system-wide UENV images. Exiting.")
+            return False
+        available_images.setdefault(remotehost,{})['host'] = extract_first_column(command_out)
+        
+        command = ["ssh", remotehost, "uenv", "image", "find", "service::"]
+        command_out,command_ok = run_command(command)
+        if not command_ok:
+            print("❌ Failed to fetch service UENV images. Exiting.")
+            return False    
+        available_images.setdefault(remotehost,{})['service'] = extract_first_column(command_out)
+
+    # Step 4: Check missing images and pull them if necessary
+    for uenv in uenvs:
+        env = uenv[1]
+        remotehost = uenv[0]
+        if env in available_images[remotehost]['user']:
+            print(f"✅ Image '{env}' is already available for the user on {remotehost}.")
+        elif env in available_images[remotehost]['host']:
+            print(f"✅ Image '{env}' is available on the host {remotehost}. Pulling...")
+            command = ["ssh", remotehost, "uenv", "image", "pull", env]
+            command_out, command_ok = run_command(command)
+        elif uenv in available_images[remotehost]['service']:
+            print(f"✅ Image '{env}' is available in the service repo on {remotehost}. Pulling from service::...")
+            command = ["ssh", remotehost, "uenv", "image", "pull", f"service::{env}"]
+            command_out, command_ok = run_command(command)
+        else:
+            print(f"❌ Image '{env}' is not available anywhere on {remotehost}! Manual intervention needed.")
+            return False
+
+    print("✅ UENV management complete.")
+    return True
 
 # copying scripts and data directories to daint, may take a while
 
@@ -175,71 +296,6 @@ def copy_scripts(cscs_username,remotehost):# Define commands
         command_out,command_ok = run_command(cmd)
         if not command_ok(cmd):
             return
-
-# Manage uenvs
-
-def manage_uenv_images(remote_host, uenvs):
-    """
-    Ensure that required uenv images are available on a remote host.
-    
-    :param remote_host: The remote machine where commands will be executed.
-    :param uenvs: A list of required uenv images (e.g., ['cp2k/2024.3:v2', 'qe/7.4:v2'])
-    """
-
-    def extract_first_column(command_output):
-        """Extracts only the first column (UENV image names) from multi-column output."""
-        lines = command_output.split("<br>")[1:]  # Skip the header line
-        return {line.split()[0] for line in lines if line.strip()}  # Get first column values
-
-    # Step 1: Check if the uenv repo exists, if not, create it
-    print("🔍 Checking UENV repository status...")
-    repo_status, command_ok = run_command("uenv repo status",ssh=True,remotehost=remotehost)
-    if not command_ok:
-        print("❌ Failed to check UENV repo status. Exiting.")
-        return False
-    
-    if "not found" in repo_status.lower() or not repo_status or "no repository" in repo_status.lower() :
-        print("⚠️ UENV repo not found. Creating repository...")
-        command_out,command_ok = run_command("uenv repo create",ssh=True,remotehost=remotehost)
-        if not command_ok:
-            print("❌ Failed to create UENV repo. Exiting.")
-            return False
-    else:
-        print("✅ UENV repo is available.")
-
-    # Step 2: Get the list of images available to the user
-    print("🔍 Fetching available UENV images (user)...")
-    available_user_images = extract_first_column(run_command("uenv image ls",ssh=True,remotehost=remotehost)[0])
-
-    # Step 3: Get the list of all images available on the system
-    print("🔍 Fetching available UENV images (system-wide)...")
-    command_out,command_ok = run_command("uenv image ls ",ssh=True,remotehost=remotehost)
-    if not command_ok:
-        print("❌ Failed to fetch system-wide UENV images. Exiting.")
-        return False
-    available_host_images = extract_first_column(command_out)
-    command_out,command_ok = run_command("uenv image find service::",ssh=True,remotehost=remotehost)
-    if not command_ok:
-        print("❌ Failed to fetch service UENV images. Exiting.")
-        return False    
-    available_service_images = extract_first_column(command_out)
-
-    # Step 4: Check missing images and pull them if necessary
-    for uenv in uenvs:
-        if uenv in available_user_images:
-            print(f"✅ Image '{uenv}' is already available for the user.")
-        elif uenv in available_host_images:
-            print(f"✅ Image '{uenv}' is available on the host. Pulling...")
-            run_command(f"uenv image pull {uenv}",ssh=True,remotehost=remotehost)
-        elif uenv in available_service_images:
-            print(f"✅ Image '{uenv}' is available in the service repo. Pulling from service::...")
-            run_command(f"uenv image pull service::{uenv}",ssh=True,remotehost=remotehost)
-        else:
-            print(f"❌ Image '{uenv}' is not available anywhere! Manual intervention needed.")
-            return False
-
-    print("✅ UENV management complete.")
-    return True
 
 # setup phoopy
 
@@ -418,9 +474,9 @@ def get_old_unfinished_workchains():
     
     old_unfinished = [entry[0] for entry in qb.all()]
     if not old_unfinished:
-        return "<h2 style='color: green;'>✅ No old unfinished WorkChainNodes found.</h2>"
+        return "<style='color: green;'>✅ No old unfinished WorkChainNodes found.<br>"
     
-    msg = "<h2 style='color: darkorange;'>⚠️ Found old unfinished WorkChains</h2>"
+    msg = "<style='color: darkorange;'>⚠️ Found old unfinished WorkChains<br>"
     msg += "<p>Ask for help if you are unsure about removing them.</p><ul>"
     
     for pk in old_unfinished:

@@ -1,8 +1,0 @@
-append_text: ' '
-computer: daint.alps
-default_calc_job_plugin: critic2
-description: critic2 at daint alps
-filepath_executable: /users/cpi/critic2/build/src/critic2
-label: critic2
-prepend_text: ''
-use_double_quotes: 'False'

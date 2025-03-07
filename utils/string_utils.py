@@ -1,6 +1,11 @@
 from datetime import datetime
 import re
 # labels to rename old host and codes
+def extract_first_column(command_output):
+    """Extracts only the first column (UENV image names) from multi-column output."""
+    lines = command_output.split("\n")[1:]  # Skip the header line
+    return {line.split()[0] for line in lines if line.strip()}  # Get first column values
+
 def relabel(label):
     """Assumes that in case @ is present it is a code and keeps only the portion preceding @ """
     before_at, at, after_at = label.partition('@')
@@ -90,3 +95,4 @@ def normalize_text(text):
 
     # Join lines back together while preserving newlines
     return "\n".join(lines)
+    

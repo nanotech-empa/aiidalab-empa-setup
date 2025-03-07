@@ -1,4 +1,5 @@
 import asyncio
+import functools
 import ipywidgets as ipw
 from datetime import datetime
 from utils.control import * 
@@ -20,8 +21,8 @@ class ConfigAiiDAlabApp(ipw.VBox):
         )
 
         self.account_widget = ipw.Dropdown(
-            value='s1267',
-            options=['s1267', 's1276'],
+            value='',
+            options=[''],
             description='CSCS Account:',
             layout=ipw.Layout(width='400px'),
             style=style
@@ -29,6 +30,7 @@ class ConfigAiiDAlabApp(ipw.VBox):
         
         self.update_message = ipw.HTML("Nothing to report")
         self.update_old_workchains = ipw.HTML("")
+        self.check = True # set to False while applying updates and then set to True again
 
         # Checkbox for QE Postprocess
         self.qe_postprocess_checkbox = ipw.Checkbox(value=False, description="QE Postprocess")
@@ -59,22 +61,26 @@ class ConfigAiiDAlabApp(ipw.VBox):
         ])
 
         # Start periodic checks
-        asyncio.create_task(self._start_periodic_check_updates(7200))
-        asyncio.create_task(self._start_periodic_check_old_workchains(7200))
+        asyncio.create_task(self._start_periodic_check_updates(60))
+        asyncio.create_task(self._start_periodic_check_old_workchains(60))
         
     async def _start_periodic_check_updates(self, interval):
         """Periodically check for updates."""
         while True:
-            msg,self.updates_needed,self.config = await asyncio.to_thread(check_for_updates)
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            self.update_message.value = f"<b>{timestamp}</b>: {remove_green_check_lines(msg)}"
+            if self.check:
+                msg,self.updates_needed,self.config = await asyncio.to_thread(functools.partial(check_for_updates,self.account_widget.value))
+                all_grants = ['']+[grant for grants_list in self.config["grants"].values() for grant in grants_list]
+                self.account_widget.options = all_grants
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                self.update_message.value = f"<b>{timestamp}</b>: {remove_green_check_lines(msg)}"
             await asyncio.sleep(interval)
 
     async def _start_periodic_check_old_workchains(self, interval):
         """Periodically check for pending too old workchains."""
         while True:
-            update_result = await asyncio.to_thread(get_old_unfinished_workchains)
-            self.update_old_workchains.value = f"<b>Old WorkChains Check:</b> {update_result}"
+            if self.check:
+                update_result = await asyncio.to_thread(get_old_unfinished_workchains)
+                self.update_old_workchains.value = f"<b>Old WorkChains Check:</b> {update_result}"
             await asyncio.sleep(interval)
                    
     def clear_output(self,_):
@@ -82,44 +88,47 @@ class ConfigAiiDAlabApp(ipw.VBox):
         self.subtitle.value = ""
       
     def run_configuration(self,_):
+        self.check = False
         self.output.clear_output()
         self.subtitle.value = "<h3>Cloning repository with config files</h3>"
         with self.output:        
             if self.username_widget.value == '':
                 print("❌ Specify the user")
                 return
-            cscs_username = self.username_widget.value
-            cscs_account = self.account_widget.value
+        cscs_username = self.username_widget.value
             
-        self.output.clear_output()        
+        #self.output.clear_output()        
         self.subtitle.value = "<h3>Setup SSH config file. Check SSH connection.</h3>"
         with self.output:
-            self.output.clear_output()
+            #self.output.clear_output()
             if "ssh_config" in self.updates_needed:
                 update_ssh_config(config_path,self.config['ssh_config'],self.username_widget.value,rename=self.updates_needed['ssh_config']['rename'])
-                set_ssh(self.config['computers'],self.updates_needed['ssh_config']['hosts'])
-                                    
-        self.output.clear_output()
-        self.subtitle.value = "<h3>Check SHH connection</h3>"
-        with self.output:
-            if not set_ssh(cscs_username):
-                print("❌ ssh problem, ask for support")
-                return
+                if not set_ssh(self.config['computers'],self.updates_needed['ssh_config']['hosts']):
+                    print("❌ ssh problem, ask for support")
+                    return
             print("✅ ssh setup done")
-        self.output.clear_output()
+            
+        #self.output.clear_output()
+        self.subtitle.value = "<h3>Setup computers</h3>"
+        with self.output:    
+            print("🔄 Setting up computers")
+            status = setup_computers(self.updates_needed.get('computers',{}),self.config['computers'])
+            if not status:
+                return
+        #self.output.clear_output()
         self.subtitle.value = "<h3>Setup Codes and Uenvs. It will take several minutes</h3>"
         with self.output:
             # setup codes and uenvs
-            uenvs = setup_codes(['cp2k.yml', 'stm.yml', 'overlap.yml', 'pw.yml', 'pp.yml', 'projwfc.yml', 'dos.yml'])
-            qe_uenv = next((env for env in uenvs if 'espresso' in env), None)
+            status,uenvs = setup_codes(self.updates_needed.get('codes',{}),self.config)
+            qe_uenv = next((env[1] for env in uenvs if 'espresso' in env[1]), None)
             if len(uenvs) >0:
-                uenvs_ok = manage_uenv_images(remotehost, uenvs)
+                uenvs_ok = manage_uenv_images(uenvs)
                 if not uenvs_ok:
                     print("❌ uenvs not set up correctly ask for help")
                     return
                 
         if self.qe_postprocess_checkbox.value:
-            self.output.clear_output()
+            #self.output.clear_output()
             self.subtitle.value = "<h3>Setup Phonopy and Critic2</h3>"
             with self.output:
                 phonopy_ok = setup_phonopy(cscs_username)
