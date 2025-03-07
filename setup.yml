@@ -1,0 +1,21 @@
+append_text: ''
+default_memory_per_machine: 268435456
+description: daint.alps at CSCS
+hostname: daint.alps.cscs.ch
+label: daint.alps_s1267
+mpiprocs_per_machine: 256
+mpirun_command: srun --cpu-bind=socket /users/cscsusername/bin/mps-wrapper.sh
+prepend_text: '#SBATCH --ntasks-per-core=1
+
+  #SBATCH --hint=nomultithread
+
+  #SBATCH --no-requeue
+
+  #SBATCH --account=s1267
+
+  '
+scheduler: core.slurm
+shebang: '#!/bin/bash -l'
+transport: core.ssh
+use_double_quotes: false
+work_dir: /capstor/scratch/cscs/{username}/aiida/

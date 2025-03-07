@@ -72,6 +72,9 @@ class ConfigAiiDAlabApp(ipw.VBox):
                 all_grants = ['']+[grant for grants_list in self.config["grants"].values() for grant in grants_list]
                 self.account_widget.options = all_grants
                 timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                msg = remove_green_check_lines(msg)
+                if not msg:
+                    msg = "✅ Nothing to report"
                 self.update_message.value = f"<b>{timestamp}</b>: {remove_green_check_lines(msg)}"
             await asyncio.sleep(interval)
 
@@ -145,6 +148,7 @@ class ConfigAiiDAlabApp(ipw.VBox):
                     print("❌ critic2 not set up correctly ask for help")
                     return
                 print("✅ critic2 setup done")
+        self.check = True
         return
 
 # Example function

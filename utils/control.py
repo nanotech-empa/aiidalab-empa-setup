@@ -100,7 +100,7 @@ def process_aiida_configuration(configuration_file, config_path,selected_grant):
             else:
                 install_this = False
             if full_comp in active_computers:
-                result_msg += f"⬜ Computer '{full_comp}' is already installed in AiiDA, checking for its configuration.<br>"
+                result_msg += f"✅⬜ Computer '{full_comp}' is already installed in AiiDA, checking for its configuration.<br>"
                 is_up_to_date, msg = compare_computer_configuration(full_comp, comp_data)
                 result_msg += msg
                 if not is_up_to_date:  # Only add to updates_needed if not up-to-date
@@ -128,10 +128,10 @@ def process_aiida_configuration(configuration_file, config_path,selected_grant):
         code_label = f"{code_data['label']}@{computer}"
 
         # Default: No update needed
-        msg = f"✅ Code {code_label}@{computer} is already installed in AiiDA.<br>"
+        msg = f"✅ Code {code_label} is already installed in AiiDA.<br>"
 
         if computer_up_to_date:  # Computer is up-to-date, check renaming needs
-            code_pk = next((pk for codename, pk in active_codes if codename == f"{code_label}@{computer}"), None)
+            code_pk = next((pk for codename, pk in active_codes if codename == code_label), None)
             if code_pk is not None:
                 if not compare_code_configuration(code_label,code_data):
                     updates_needed.setdefault('codes', {})[code_label] = {'rename': code_pk,'install':True}
@@ -155,6 +155,7 @@ def process_aiida_configuration(configuration_file, config_path,selected_grant):
     return True,result_msg,updates_needed,config
 
 def setup_computers(computers_to_setup,defined_computers,account=None):
+    status = True
     for computer in computers_to_setup:
         computer_name = computer.split('_')[0]
         _, _, grant = computer.partition('_') # gives '' if no _ is found
@@ -185,7 +186,7 @@ def setup_codes(codes_to_setup,config):
             print(f"✅ No uenv needed for '{full_code}'")
             
         status = setup_aiida_code(full_code, code_data,hide=codes_to_setup[full_code].get('hide',False),
-                            relabel=codes_to_setup[full_code].get('rename',False),
+                            pktorelabel=codes_to_setup[full_code].get('rename',False),
                             install=codes_to_setup[full_code].get('install',False))
         
             
@@ -205,7 +206,7 @@ def manage_uenv_images(uenvs):
     # Step 1: Check if the uenv repo exists, if not, create it
     hosts = {uenv[0] for uenv in uenvs}
     for remotehost in hosts:
-        print("🔍 Checking UENV repository status on {remotehost}")
+        print(f"🔍 Checking UENV repository status on {remotehost}")
         command = ["ssh", remotehost, "uenv", "repo", "status"]
         repo_status, command_ok = run_command(command)
         if not command_ok:
@@ -220,7 +221,7 @@ def manage_uenv_images(uenvs):
                 print(f"❌ Failed to create UENV repo on {remotehost}. Exiting.")
                 return False
         else:
-            print("✅ UENV repo is available on {remotehost}.")
+            print(f"✅ UENV repo is available on {remotehost}.")
 
     # Step 2: Get the list of images available to the user
     available_images = {}
@@ -228,7 +229,6 @@ def manage_uenv_images(uenvs):
         print(f"🔍 Fetching available UENV images on {remotehost} for the user ")
         command = ["ssh", remotehost, "uenv", "image", "ls"]
         command_out, command_ok = run_command(command)
-        print(command_out)
         print(extract_first_column(command_out))
         if not command_ok:
             print(f"❌ Failed to fetch UENV images on {remotehost}. Exiting.")

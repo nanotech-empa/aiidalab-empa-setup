@@ -8,111 +8,87 @@ import os
 def run_command(command, max_retries=5):
     """
     Run a shell command locally or over SSH, capturing output and handling errors.
-    If the error contains 'Connection closed by remote host', retries up to max_retries times with a 5-second wait.
-
-    Args:
-        command (list): The command to execute.
-        max_retries (int): Maximum number of retries on connection failure.
-
-    Returns:
-        tuple: (command output as string, success as bool)
+    Retries on 'Connection closed by remote host' errors.
     """
-    
     retries = max_retries if any(cmd in command for cmd in ["ssh", "scp", "ssh-keyscan"]) else 1
     attempts = 0
 
     while attempts < retries:
+        output, success = "", False
         try:
             result = subprocess.run(command, check=True, capture_output=True, text=True)
-            print(f"✅ Command executed successfully: {command}")
-            return result.stdout.strip(), True
+            output, success = result.stdout.strip(), True
+            #print(f"✅ Command executed successfully: {command}")
+            return output, success
         except subprocess.CalledProcessError as e:
             error_msg = e.stderr.strip()
-            print(f"❌ Error executing command:\n{error_msg}")
-
+            #print(f"❌ Error executing command: {error_msg}")
+            
             if "Connection closed by remote host" in error_msg and attempts < retries - 1:
                 attempts += 1
-                print(f"🔄 Retrying in 5 seconds... (Attempt {attempts}/{retries})")
+                #print(f"🔄 Retrying in 5 seconds... (Attempt {attempts}/{retries})")
                 time.sleep(5)
             else:
                 return error_msg, False  # Return error message and success=False
 
     return "", False  # Should never reach this
 
-def compare_computer_configuration(computer_name, stored_computer_data):
+def compare_computer_configuration(computer_name, repository_computer_data):
     """
-    Compares the setup and config of a computer in AiiDA against the stored values in config.yml.
-
-    :param computer_name: The name of the computer in AiiDA.
-    :param config_file: Path to config.yml.
-    :return: A formatted string with the comparison results.
+    Compares the setup and config of a computer in AiiDA against stored values.
     """
-
-    # Get the stored setup and config for the given computer
+    repository_setup = repository_computer_data.get("setup", {})
+    repository_config = repository_computer_data.get("config", {})
     
-    stored_setup = stored_computer_data.get("setup", {})
-    stored_config = stored_computer_data.get("config", {})
+    if not repository_setup or not repository_config:
+        return False, f"❌ Computer '{computer_name}' not found in config.yml!<br>"
 
-    if not stored_setup or not stored_config:
-        return f"❌ Computer '{computer_name}' not found in config.yml!<br>"
+    setup_export_file, config_export_file = "setup.yml", "config.yml"
+    commands = [
+        ["verdi", "computer", "export", "setup", computer_name, setup_export_file],
+        ["verdi", "computer", "export", "config", computer_name, config_export_file]
+    ]
+    
+    for cmd in commands:
+        output, success = run_command(cmd)
+        if not success:
+            return False, f"❌ Error exporting AiiDA computer setup/config: {output}<br>"
 
-    # Step 2: Export the current setup and config from AiiDA
-    setup_export_file = "setup.yml"
-    config_export_file = "config.yml"
-
-    try:
-        subprocess.run(["verdi", "computer", "export", "setup", computer_name, setup_export_file], 
-                       capture_output=True, text=True, check=True)
-        subprocess.run(["verdi", "computer", "export", "config", computer_name, config_export_file],
-                       capture_output=True, text=True, check=True,)
-    except subprocess.CalledProcessError as e:
-        return False, f"❌ Error exporting AiiDA computer setup/config: {e.stderr}<br>"
-
-    # Step 3: Load exported YAML files
     with open(setup_export_file, "r") as file:
         exported_setup = yaml.safe_load(file)
-
     with open(config_export_file, "r") as file:
         exported_config = yaml.safe_load(file)
 
-    
-    #setup differences
-    for entry in stored_setup.keys():  
-        str1,str2 = remove_placeholders(normalize_text(str(stored_setup[entry])), 
-                                       normalize_text(str(exported_setup[entry])))
-        
-        if not str1 == str2:
-            return False,f"⚠️ **Setup Differences:**<br>"
-    
-    for entry in stored_config.keys(): 
-        str1,str2 = remove_placeholders(normalize_text(str(stored_config[entry])), 
-                                       normalize_text(str(exported_config[entry])))        
-        if not str1==str2:
-            return False,f"⚠️ **Config Differences:**<br>"        
+    for entry in repository_setup:
+        str1, str2 = remove_placeholders(normalize_text(str(repository_setup[entry])), normalize_text(str(exported_setup.get(entry, ""))))
+        if str1 != str2:
+            return False, f"⚠️ **Setup Differences:** {entry}<br>"
 
+    for entry in repository_config:
+        str1, str2 = remove_placeholders(normalize_text(str(repository_config[entry])), normalize_text(str(exported_config.get(entry, ""))))
+        if str1 != str2:
+            return False, f"⚠️ **Config Differences:** {entry}<br>"
 
     return True, "✅ No differences found! The stored configuration matches AiiDA.<br>"
 
+def compare_code_configuration(code_label, repository_code_data):
+    """
+    Compares the setup of an AiiDA code against stored values.
+    """
+    export_file = "export.yml"
+    
+    output, success = run_command(["verdi", "code", "export", code_label, export_file])
+    if not success:
+        return False, f"❌ Error exporting AiiDA code setup: {output}<br>"
 
-def compare_code_configuration(code_label,stored_code_data):
-    computer = stored_code_data['computer']
-    try:
-        subprocess.run(["verdi", "code", "export", f"{code_label}", "export.yml"],
-                       capture_output=True, text=True,  check=True)
-    except subprocess.CalledProcessError as e:
-        return False, f"❌ Error exporting AiiDA code setup: {e.stderr}<br>"
-
-    # Step 3: Load exported YAML files
-    with open("export.yml", "r") as file:
+    with open(export_file, "r") as file:
         exported_setup = yaml.safe_load(file)
 
-    #setup differences
-    for entry in stored_code_data.keys():  
-        str1,str2 = remove_placeholders(normalize_text(str(stored_code_data[entry])), 
-                                       normalize_text(str(exported_setup[entry])))
-        if not str1 == str2:
-            return False,f"⚠️ **Setup Differences:**<br>"
-        
+    for entry in repository_code_data:
+        str1, str2 = remove_placeholders(normalize_text(str(repository_code_data[entry])), normalize_text(str(exported_setup.get(entry, ""))))
+        if str1 != str2:
+            return False, f"⚠️ **Setup Differences:** {entry}<br>"
+    
     return True, f"✅ No differences found! The stored configuration for {code_label} matches AiiDA.<br>"
 
 def aiida_computers():
@@ -120,97 +96,70 @@ def aiida_computers():
     active_computers = set()
     not_active_computers = set()
 
-    try:
-        result = subprocess.run(
-            ["verdi", "computer", "list", "-a"],
-            capture_output=True,
-            text=True,
-            check=True
-        )
+    output, success = run_command(["verdi", "computer", "list", "-a"])
+    if not success:
+        return False, f"❌ Error running 'verdi computer list -a': {output}", active_computers, not_active_computers
 
-        for line in result.stdout.splitlines():
-            stripped_line = line.strip()
-            if stripped_line.startswith("* "):  # Active  computers
-                active_computers.add(stripped_line[2:])  # Remove "* "
-            elif stripped_line and not stripped_line.startswith("Report:"):  # Inactive computers
-                not_active_computers.add(stripped_line)
-
-    except subprocess.CalledProcessError as e:
-        return False, f"❌ Error running 'verdi computer list -a': {e.stderr}",active_computers,not_active_computers
+    for line in output.splitlines():
+        stripped_line = line.strip()
+        if stripped_line.startswith("* "):
+            active_computers.add(stripped_line[2:])
+        elif stripped_line and not stripped_line.startswith("Report:"):
+            not_active_computers.add(stripped_line)
 
     result_msg += f"✅ Active AiiDA computers: {'<br>'.join([f'✅{comp}' for comp in active_computers])}"
     result_msg += "<br>"
     result_msg += f"✅⬜ Not active AiiDA computers: {'<br>'.join([f'✅⬜{comp}' for comp in not_active_computers])}"
     result_msg += "<br>"
 
-    return True,result_msg,active_computers,not_active_computers
+    return True, result_msg, active_computers, not_active_computers
 
 def aiida_codes():
     result_msg = ""
     all_codes = set()
     codes = set()
 
-    try:
-        result = subprocess.run(["verdi", "code", "list", "-a"], capture_output=True, text=True, check=True)
-        lines = result.stdout.splitlines()
-        # [code,pk]
-        all_codes = {(line.split()[0],line.split()[1]) for line in lines if "@" in line}
-    except subprocess.CalledProcessError as e:        
-        return False, f"❌ Error running 'verdi code list -a': {e.stderr}<br>",set(),set()
+    output, success = run_command(["verdi", "code", "list", "-a"])
+    if not success:
+        return False, f"❌ Error running 'verdi code list -a': {output}<br>", set(), set()
+    all_codes = {(line.split()[0], line.split()[1]) for line in output.splitlines() if "@" in line}
     
-    
-    try:
-        result = subprocess.run(["verdi", "code", "list"], capture_output=True, text=True, check=True)
-        lines = result.stdout.splitlines()
-        codes = {(line.split()[0],line.split()[1]) for line in lines if "@" in line}
-    except subprocess.CalledProcessError as e:        
-        return False, f"❌ Error running 'verdi code list': {e.stderr}<br>",set(),set() 
-    
-    not_active_codes = all_codes - codes
-        
-    active_section = ('<br>'.join([f"✅ {code[0]}  PK: {str(code[1])}" for code in (codes or [])]) 
-                    if codes else "None")
+    output, success = run_command(["verdi", "code", "list"])
+    if not success:
+        return False, f"❌ Error running 'verdi code list': {output}<br>", set(), set()
+    codes = {(line.split()[0], line.split()[1]) for line in output.splitlines() if "@" in line}
 
-    not_active_section = ('<br>'.join([f"✅⬜{code[0]} PK: {str(code[1])}" for code in (not_active_codes or [])]) 
-                        if not_active_codes else "None")
+    not_active_codes = all_codes - codes
+    active_section = ('<br>'.join([f"✅ {code[0]}  PK: {str(code[1])}" for code in (codes or [])]) if codes else "None")
+    not_active_section = ('<br>'.join([f"✅⬜{code[0]} PK: {str(code[1])}" for code in (not_active_codes or [])]) if not_active_codes else "None")
 
     result_msg += f"✅ Active AiiDA codes:<br> {active_section}"
     result_msg += "<br>"
     result_msg += f"✅⬜ Not active AiiDA codes:<br> {not_active_section}"
     result_msg += "<br>"
-    return True,result_msg,codes,not_active_codes
+    return True, result_msg, codes, not_active_codes
 
 
-
-def setup_aiida_computer(computer_name, config,hide=False,torelabel=False,install=False,grant=''):
+def setup_aiida_computer(computer_name, config, hide=False, torelabel=False, install=False, grant=''):
     """
-    Sets up an AiiDA computer using `verdi computer setup` and configures SSH using `verdi computer configure core.ssh`.
-
-    :param computer_name: The name of the computer (key from the config dictionary).
-    :param config: The dictionary containing the setup and config details from the YAML file.
-    """       
+    Sets up an AiiDA computer using `verdi computer setup` and configures SSH.
+    """
     setup = config["setup"]
     ssh_config = config["config"]
-    commands = []
+    
     if hide:
-        if torelabel:
-            relabeled = relabel(computer_name)
-            commands.append(["verdi","computer","relabel",computer_name,relabeled])
-        else:
-            relabeled = computer_name
-        commands.append(["verdi","computer","disable",relabeled,"aiida@localhost"])
-    # Run computer setup
+        relabeled = relabel(computer_name) if torelabel else computer_name
+        commands = [["verdi", "computer", "relabel", computer_name, relabeled]] if torelabel else []
+        commands.append(["verdi", "computer", "disable", relabeled, "aiida@localhost"])
+        
         for command in commands:
-            try:
-                subprocess.run(command, capture_output=True, text=True, check=True)
-            except subprocess.CalledProcessError as e:
-                print(f"❌ Error relabelling/deactivating '{computer_name}': {e}")
+            output, success = run_command(command)
+            if not success:
+                print(f"❌ Error relabelling/deactivating '{computer_name}': {output}")
                 return False
         print(f"✅ Successfully relabeled computer '{computer_name}' to '{relabeled}'.")
 
     if install:
-        # Command for verdi computer setup
-        print(f"🔄 Setting up computer '{computer_name}'")
         setup_command = [
             "verdi", "computer", "setup",
             "--label", computer_name,
@@ -225,107 +174,86 @@ def setup_aiida_computer(computer_name, config,hide=False,torelabel=False,instal
             "--default-memory-per-machine", str(setup["default_memory_per_machine"]),
             "--prepend-text", setup["prepend_text"].replace('cscsaccount', grant),
             "--non-interactive",
-        ]
-        if setup["use_double_quotes"]:
-            setup_command.append("--use-double-quotes")
-        else:
-            setup_command.append("--not-use-double-quotes")
+        ] + (["--use-double-quotes"] if setup["use_double_quotes"] else ["--not-use-double-quotes"])
         
-        # Run computer setup
-        try:
-            subprocess.run(setup_command, capture_output=True, text=True, check=True)
-            print(f"✅ Successfully set up computer '{computer_name}'.")
-        except subprocess.CalledProcessError as e:
-            print(f"❌ Error setting up computer '{computer_name}': {e}")
+        output, success = run_command(setup_command)
+        if not success:
+            print(f"❌ Error setting up computer '{computer_name}': {output}")
             return False
-
-        # Command for verdi computer configure core.ssh
+        print(f"✅ Successfully set up computer '{computer_name}'.")
+        
         configure_command = [
-            "verdi", "computer", "configure", setup["transport"], computer_name,
-            "--username", ssh_config["username"],
-            "--port", str(ssh_config["port"]),
-            "--look-for-keys" if ssh_config["look_for_keys"] else "--no-look-for-keys",
-            "--key-filename", ssh_config["key_filename"],
-            "--timeout", str(ssh_config["timeout"]),
-            "--allow-agent" if ssh_config["allow_agent"] else "--no-allow-agent",
-            "--proxy-jump", ssh_config["proxy_jump"] if ssh_config["proxy_jump"] else " ",
-            "--proxy-command", ssh_config["proxy_command"] if ssh_config["proxy_command"] else " ",
-            "--compress" if ssh_config["compress"] else "--no-compress",
-            "--gss-auth", str(ssh_config["gss_auth"]),
-            "--gss-kex", str(ssh_config["gss_kex"]),
-            "--gss-deleg-creds", str(ssh_config["gss_deleg_creds"]),
-            "--gss-host", ssh_config["gss_host"],
-            "--load-system-host-keys" if ssh_config["load_system_host_keys"] else "--no-load-system-host-keys",
-            "--key-policy", ssh_config["key_policy"],
-            "--use-login-shell" if ssh_config["use_login_shell"] else "--no-use-login-shell",
-            "--safe-interval", str(ssh_config["safe_interval"]),
-            "--non-interactive",
-        ]
-        
-        # Remove empty options (proxy_jump and proxy_command if they are empty)
-        #configure_command = [arg for arg in configure_command if arg]
+        "verdi", "computer", "configure", setup["transport"], computer_name,
+        "--username", ssh_config["username"],
+        "--port", str(ssh_config["port"]),
+        "--look-for-keys" if ssh_config["look_for_keys"] else "--no-look-for-keys",
+        "--key-filename", ssh_config["key_filename"],
+        "--timeout", str(ssh_config["timeout"]),
+        "--allow-agent" if ssh_config["allow_agent"] else "--no-allow-agent",
+        "--proxy-jump", ssh_config["proxy_jump"] if ssh_config["proxy_jump"] else " ",
+        "--proxy-command", ssh_config["proxy_command"] if ssh_config["proxy_command"] else " ",
+        "--compress" if ssh_config["compress"] else "--no-compress",
+        "--gss-auth", str(ssh_config["gss_auth"]),
+        "--gss-kex", str(ssh_config["gss_kex"]),
+        "--gss-deleg-creds", str(ssh_config["gss_deleg_creds"]),
+        "--gss-host", ssh_config["gss_host"],
+        "--load-system-host-keys" if ssh_config["load_system_host_keys"] else "--no-load-system-host-keys",
+        "--key-policy", ssh_config["key_policy"],
+        "--use-login-shell" if ssh_config["use_login_shell"] else "--no-use-login-shell",
+        "--safe-interval", str(ssh_config["safe_interval"]),
+        "--non-interactive",
+    ]
 
-        # Run computer configuration
-        try:
-            subprocess.run(configure_command, capture_output=True, text=True, check=True)
-            print(f"✅ Successfully configured SSH for computer '{computer_name}'.")
-        except subprocess.CalledProcessError as e:
-            print(f"❌ Error configuring SSH for computer '{computer_name}': {e}")
-            return False
+    # Remove empty options (proxy_jump and proxy_command if they are empty)
+    #configure_command = [arg for arg in configure_command if arg.strip()]
+    
+    output, success = run_command(configure_command)
+    if not success:
+        print(f"❌ Error configuring SSH for computer '{computer_name}': {output}")
+        return False
+    print(f"✅ Successfully configured SSH for computer '{computer_name}'.")        
+    
+        
     return True
 
-
-def setup_aiida_code(code_name, code_config,hide=False,relabel=False,install=False):
+def setup_aiida_code(code_name, code_config, hide=False, pktorelabel=False, install=False):
     """
     Sets up an AiiDA code using `verdi code create core.code.installed`.
-
-    :param code_name: The name of the code (key from the config dictionary).
-    :param config: The dictionary containing the setup details from the YAML file.
     """
-    
-    if relabel:
-        relabeled = relabel(code_name)
-        relabel_command = ["verdi","code","relabel",code_name,relabeled]
-        try:
-            subprocess.run(relabel_command, capture_output=True, text=True, check=True)
-            print(f"✅ Successfully relabeled code '{code_name}' to '{relabeled}'.")
-        except subprocess.CalledProcessError as e:
-            print(f"❌ Error relabelling '{code_name}': {e.stderr}"())
+    # code_name pw-7.4:v2@daint.alps_s1267
+    code = code_name.split("@")[0]
+    computer = code_name.split("@")[1]
+    relabeled = relabel(code) if pktorelabel else code
+    if pktorelabel:
+        output, success = run_command(["verdi", "code", "relabel", str(pktorelabel), relabeled])
+        if not success:
+            print(f"❌ Error relabelling '{code_name}': {output}")
             return False
-    else:
-        relabeled = code_name
-        
+    
     if hide:
-        hide_command = ["verdi","code","hide",relabeled]
-        try:
-            subprocess.run(hide_command, check=True, capture_output=True, text=True)
-            print(f"✅ Successfully hidded '{code_name}' {hide}.")
-        except subprocess.CalledProcessError as e:
-            print(f"❌ Error hiding code '{code_name}' {hide}:\n{e.stderr}")
-            return False        
-    if install:         
-    # Command for verdi code create core.code.installed
+        output, success = run_command(["verdi", "code", "hide", str(pktorelabel)])
+        if not success:
+            print(f"❌ Error hiding code '{code_name}': {output}")
+            return False
+    
+    if install:
         code_command = [
             "verdi", "code", "create", "core.code.installed",
-            "--computer", code_config["computer"],
+            "--computer", computer, 
             "--filepath-executable", code_config["filepath_executable"],
             "--label", relabeled,
             "--description", code_config["description"],
             "--default-calc-job-plugin", code_config["default_calc_job_plugin"],
-            "--use-double-quotes" if code_config.get("use_double_quotes", False) else "--no-use-double-quotes",
-            "--with-mpi" if code_config.get("with_mpi", False) else "--no-with-mpi",
             "--prepend-text", code_config.get("prepend_text", " "),
             "--append-text", code_config.get("append_text", " ")
-            ]
-
-        # Run code setup
-        try:
-            subprocess.run(code_command, check=True, capture_output=True, text=True)
-            print(f"✅ Successfully set up code '{code_name}'.")
-        except subprocess.CalledProcessError as e:
-            print(f"❌ Error setting up code '{code_name}':\n{e.stderr}")
+        ] + (["--use-double-quotes"] if code_config.get("use_double_quotes", False) else ["--no-use-double-quotes"])
+        
+        output, success = run_command(code_command)
+        if not success:
+            print(f"❌ Error setting up code '{code_name}': {output}")
             return False
-        return True
+        print(f"✅ Successfully set up code '{code_name}'.")
+    return True
         
 def check_ssh_config(config_path, config_from_yaml):
     config_file = config_path / "config"
