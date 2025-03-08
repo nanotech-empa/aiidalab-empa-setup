@@ -1,7 +1,6 @@
 import subprocess
 from pathlib import Path
 # labels for paths
-alps_files ='' # REMOVE
 repo_name = "aiidalab-alps-files"
 home_dir = Path("/home/jovyan")  # Explicitly set /home/jovyan
 target_dir = home_dir / "opt"

@@ -118,10 +118,12 @@ class ConfigAiiDAlabApp(ipw.VBox):
             status = setup_computers(self.updates_needed.get('computers',{}),self.config['computers'])
             if not status:
                 return
+            print("✅ Done")
         #self.output.clear_output()
         self.subtitle.value = "<h3>Setup Codes and Uenvs. It will take several minutes</h3>"
         with self.output:
             # setup codes and uenvs
+            print("🔄 Setting up codes")
             status,uenvs = setup_codes(self.updates_needed.get('codes',{}),self.config)
             qe_uenv = next((env[1] for env in uenvs if 'espresso' in env[1]), None)
             if len(uenvs) >0:
@@ -129,12 +131,16 @@ class ConfigAiiDAlabApp(ipw.VBox):
                 if not uenvs_ok:
                     print("❌ uenvs not set up correctly ask for help")
                     return
-                
+            print("✅ Done")    
         if self.qe_postprocess_checkbox.value:
+            
+            computer = self.config['codes']['pw']['computer']
+            remotehost = self.config['computers'][computer]['setup']['hostname']
             #self.output.clear_output()
             self.subtitle.value = "<h3>Setup Phonopy and Critic2</h3>"
             with self.output:
-                phonopy_ok = setup_phonopy(cscs_username)
+                print("🔄 Setting up phonopy")
+                phonopy_ok = setup_phonopy(cscs_username,remotehost)
                 if not phonopy_ok:
                     print("❌ phonopy not set up correctly ask for help")
                     return
@@ -142,8 +148,10 @@ class ConfigAiiDAlabApp(ipw.VBox):
             self.output.clear_output()
             self.subtitle.value = "<h3>Setup Critic2</h3>"  
             with self.output:
-                print("Creating conda environment will take a while")
-                critic2_ok = setup_critic2(cscs_username,qe_uenv)
+                print("🔄 Creating conda environment will take a while")
+                match = re.search(r"#SBATCH --uenv=([\w\-/.]+:\d+)", self.config['codes']['pw']['prepend_text'])
+                qe_uenv = match.group(1) if match else None
+                critic2_ok = setup_critic2(cscs_username,qe_uenv,remotehost,self.config['python_version'])
                 if not critic2_ok:
                     print("❌ critic2 not set up correctly ask for help")
                     return

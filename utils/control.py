@@ -169,6 +169,7 @@ def setup_computers(computers_to_setup,defined_computers,account=None):
 def setup_codes(codes_to_setup,config):
     defined_codes = config.get("codes", {})
     uenvs=[]
+    status = True
     for full_code in codes_to_setup:
         # pw-7.4:v2@daint.alps_s1267
         code = full_code.split('@')[0].split('-')[0] # pw
@@ -281,8 +282,8 @@ def copy_scripts(cscs_username,remotehost):# Define commands
     ]
 
     scp_commands = [
-        f"scp {alps_files}mps-wrapper.sh {remotehost}:/users/{cscs_username}/bin/",
-        f"scp -r {alps_files}cp2k {remotehost}:/users/{cscs_username}/src/"
+        f"scp {config_files}/mps-wrapper.sh {remotehost}:/users/{cscs_username}/bin/",
+        f"scp -r {config_files}/cp2k {remotehost}:/users/{cscs_username}/src/"
     ]
 
     # Execute SSH commands
@@ -297,84 +298,113 @@ def copy_scripts(cscs_username,remotehost):# Define commands
         if not command_ok(cmd):
             return
 
-# setup phoopy
-
-def setup_phonopy(cscs_username):
+def setup_phonopy(cscs_username, remotehost):
+    conda_init = f"source /users/{cscs_username}/miniconda3/bin/activate"
+    commands = [
+        ["ssh", remotehost, "if [ ! -f Miniconda3-latest-Linux-aarch64.sh ]; then wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-aarch64.sh; fi"],
+        ["ssh", remotehost, f"if [ ! -d /users/{cscs_username}/miniconda3 ]; then bash Miniconda3-latest-Linux-aarch64.sh -b -p /users/{cscs_username}/miniconda3; fi"],
+        ["scp", f"{config_files}/bashrc_template", f"{remotehost}:/users/{cscs_username}"],
+        ["ssh", remotehost, "mv .bashrc .old_bashrc"],
+        ["ssh", remotehost, "mv bashrc_template .bashrc"],
+        ["ssh", remotehost, f"bash -l -c '{conda_init} && conda env list | grep -q \"^phonopy \" && echo \"Environment exists\" || conda create -n phonopy -c conda-forge phonopy seekpath'"],
+    ]
     
-    command = """
-if [ ! -f Miniconda3-latest-Linux-aarch64.sh ] ; then
-    wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-aarch64.sh
-fi"""
-    command_out,comand_ok = run_command(command,ssh=True,remotehost=remotehost)
-    if not comand_ok:
-        print("❌ Failed to download Miniconda3. Exiting, ask for help.")
-        return False 
+    for command in commands:
+        command_out, command_ok = run_command(command)
+        if not command_ok:
+            print(f"❌ Failed to execute: {' '.join(command)}. Exiting, ask for help.")
+            return False
     
-    command = f"""
-if [ ! -d /users/{cscs_username}/miniconda3 ]; then
-     bash Miniconda3-latest-Linux-aarch64.sh -b -p /users/{cscs_username}/miniconda3
-fi"""
-    command_out,command_ok = run_command(command,ssh=True,remotehost=remotehost)
-    if not command_ok:
-        print("❌ Failed to install Miniconda3. Exiting, ask for help.")
-        return False
-    command_out,command_ok = run_command(f"scp {alps_files}bashrc_template {remotehost}:/users/{cscs_username}")
-    if not command_ok:
-        print("❌ Failed to copy bashrc_template. Exiting, ask for help.")
-        return False
-    command_out,command_ok = run_command("mv .bashrc .old_bashrc",ssh=True,remotehost=remotehost)
-    if not command_ok:
-        print("❌ Failed to rename .bashrc. Exiting, ask for help.")
-        return False
-    command_out,command_ok = run_command("mv bashrc_template .bashrc",ssh=True,remotehost=remotehost)
-    if not command_ok:
-        print("❌ Failed to rename bashrc_template. Exiting, ask for help.")
-        return False
-    command_out,command_ok = run_command(command,ssh=True,remotehost=remotehost)
-    if not command_ok:
-        print("❌ Failed to copy bashrc_template. Exiting, ask for help.")
-        return False
-    command = "conda env list | grep -q '^phonopy ' && echo 'Environment exists' || conda create -n phonopy -c conda-forge phonopy seekpath"
-    command_out,command_ok = run_command(command,ssh=True,remotehost=remotehost)
-    if not command_ok:
-        print("❌ Failed to create phonopy environment. Exiting, ask for help.")
-        return False
-    _ = setup_codes(['phonopy.yml'])
+    _ = setup_codes(["phonopy.yml"])
     return True
 
-def setup_critic2(cscs_username,qe_uenv):
-    command = f"conda env list | grep -q '^py39 ' && echo 'Environment py39 exists' || conda create -n py39 -c conda-forge python={python_version} pymatgen scikit-image"
-    command_out,command_ok = run_command(command,ssh=True,remotehost=remotehost)
-    if not command_ok:
-        print("❌ Failed to create py39 environment. Exiting, ask for help.")
-        return False
-    _ = setup_codes(['python.yml'])
+def setup_critic2(cscs_username, qe_uenv, remotehost,python_version):
+    required_packages = ["pymatgen", "cloudpickle", "scikit-image"]
     
-    command = f"""
-if [ ! -d 'critic2' ]; then
-git clone https://github.com/aoterodelaroza/critic2.git
-fi"""
-    command_out,command_ok = run_command(command,ssh=True,remotehost=remotehost)
-    if not command_ok:
-        print("❌ Failed to clone critic2 repository. Exiting, ask for help.")
-        return False
-    command = f"""if [ ! -f f'/users/{cscs_username}/critic2/build/src/critic2' ]; then
-cd critic2
-mkdir build
-cd build
-uenv run {qe_uenv} cmake ..
-uenv run {qe_uenv} make
-fi"""
-    command_out,command_ok = run_command(command,ssh=True,remotehost=remotehost)
-    if not command_ok:
-        print("❌ Failed to build critic2. Exiting, ask for help.")
-        return False
-    command_out,command_ok = run_command(f"ls /users/{cscs_username}/critic2/build/src/critic2",ssh=True,remotehost=remotehost )
-    if not command_ok:
-        print("❌ critic2 not built. Exiting, ask for help.")
-        return False
-    _ = setup_codes(['critic2.yml'])
+    env_setup_command = ["ssh", remotehost, f"conda env list | grep -q '^py39 ' || conda create -n py39 -c conda-forge python={python_version} {' '.join(required_packages)} -y"]
+    run_command(env_setup_command)
+    
+    check_packages_cmd = ["ssh", remotehost, "conda activate py39 && conda list | awk '{print $1}'"]
+    output, _ = run_command(check_packages_cmd)
+    
+    installed_packages = output.split() if output else []
+    missing_packages = [pkg for pkg in required_packages if pkg not in installed_packages]
+    
+    if missing_packages:
+        install_cmd = ["ssh", remotehost, f"conda activate py39 && conda install -n py39 -c conda-forge {' '.join(missing_packages)} -y"]
+        run_command(install_cmd)
+    
+    #_ = setup_codes(["python.yml"])
+    
+    commands = [
+        ["ssh", remotehost, "if [ ! -d 'critic2' ]; then git clone https://github.com/aoterodelaroza/critic2.git; fi"],
+        ["ssh", remotehost, f"if [ ! -f /users/{cscs_username}/critic2/build/src/critic2 ]; then cd critic2 && mkdir -p build && cd build && uenv run {qe_uenv} cmake .. && uenv run {qe_uenv} make; fi"],
+        ["ssh", remotehost, f"ls /users/{cscs_username}/critic2/build/src/critic2"]
+    ]
+    
+    for command in commands:
+        command_out, command_ok = run_command(command)
+        if not command_ok:
+            print(f"❌ Failed to execute: {' '.join(command)}. Exiting, ask for help.")
+            return False
+    
+    #_ = setup_codes(["critic2.yml"])
     return True
+
+
+def execute_special_setup(setup_name, cscs_username, remotehost, qe_uenv="", python_version=""):
+    """Execute a setup sequence from YAML file."""
+    yaml_commands = load_yaml_commands()
+    
+    if setup_name not in yaml_commands["special_commands"]:
+        print(f"❌ Setup '{setup_name}' not found in YAML file. Exiting.")
+        return False
+    
+    conda_init = yaml_commands.get("conda_init", "source /users/{cscs_username}/miniconda3/bin/activate").format(cscs_username=cscs_username)
+    
+    # Run environment setup commands if they exist
+    env_setup_commands = yaml_commands.get("env_setup_commands", {}).get(setup_name, [])
+    for entry in env_setup_commands:
+        formatted_command = entry["command"].format(
+            cscs_username=cscs_username,
+            remotehost=remotehost,
+            qe_uenv=qe_uenv,
+            python_version=python_version,
+            conda_init=conda_init
+        )
+        
+        ssh_command = ["ssh", remotehost, formatted_command] if entry["type"] == "ssh" else formatted_command.split()
+        output, success = run_command(ssh_command)
+        if not success:
+            print(f"❌ Failed to execute: {formatted_command}. Exiting, ask for help.")
+            return False
+    
+    # Run special setup commands
+    commands = yaml_commands["special_commands"][setup_name]
+    for entry in commands:
+        if isinstance(entry, dict):
+            command_type = entry.get("type", "shell")
+            command = entry.get("command", "")
+        else:
+            command_type = "shell"
+            command = entry
+        
+        formatted_command = command.format(
+            cscs_username=cscs_username,
+            remotehost=remotehost,
+            qe_uenv=qe_uenv,
+            python_version=python_version,
+            conda_init=conda_init
+        )
+        
+        ssh_command = ["ssh", remotehost, formatted_command] if command_type == "ssh" else formatted_command.split()
+        output, success = run_command(ssh_command)
+        if not success:
+            print(f"❌ Failed to execute: {formatted_command}. Exiting, ask for help.")
+            return False
+    return True
+
+
 
 
 #### CHECK for old unfinished Workchains
