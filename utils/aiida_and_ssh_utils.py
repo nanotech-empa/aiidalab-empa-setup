@@ -5,7 +5,7 @@ import shutil
 import time
 import os
 
-def run_command(command, max_retries=5):
+def run_command(command, max_retries=5,verbose=False):
     """
     Run a shell command locally or over SSH, capturing output and handling errors.
     Retries on 'Connection closed by remote host' errors.
@@ -18,15 +18,18 @@ def run_command(command, max_retries=5):
         try:
             result = subprocess.run(command, check=True, capture_output=True, text=True)
             output, success = result.stdout.strip(), True
-            #print(f"✅ Command executed successfully: {command}")
+            if verbose:
+                print(f"✅ Command executed successfully: {command}")
             return output, success
         except subprocess.CalledProcessError as e:
             error_msg = e.stderr.strip()
-            #print(f"❌ Error executing command: {error_msg}")
+            if verbose:
+                print(f"❌ Error executing command: {error_msg}")
             
             if "Connection closed by remote host" in error_msg and attempts < retries - 1:
                 attempts += 1
-                #print(f"🔄 Retrying in 5 seconds... (Attempt {attempts}/{retries})")
+                if(verbose):
+                    print(f"🔄 Retrying in 5 seconds... (Attempt {attempts}/{retries})")
                 time.sleep(5)
             else:
                 return error_msg, False  # Return error message and success=False
@@ -322,12 +325,6 @@ def update_ssh_config(config_path,ssh_config_data,username,rename=True):
     print(f"✅ Created new SSH config at {config_file}")
     return
 
-
-
-
-
-
-
 def set_ssh(config, hosts):
     """
     Adds SSH host keys to known_hosts for the specified hosts.
@@ -387,6 +384,52 @@ def add_to_known_hosts(ssh_keyscan_command):
     
     return False  # Failure
 
+def execute_custom_commands(yaml_commands):
+    """Execute all commands from custom_commands in the YAML file."""    
+    if "custom_commands" not in yaml_commands:
+        print("❌ No custom commands found in YAML file. Exiting.")
+        return False
+    
+    # Execute remote computer commands
+    remote_commands = yaml_commands["custom_commands"].get("remote_commands", {})
+    remotehost = remote_commands.pop('remotehost') # remove the remotehost from the dictionary after assigning it
+    for setup_name, commands in remote_commands.items():
+        print(f"🔄 Executing remote commands for {setup_name} on {remotehost}...")
+        for entry in commands:
+            formatted_command = entry["command"]
+            remote_command = ["ssh", remotehost, formatted_command] if entry["type"] == "ssh" else formatted_command.split()
+            output, success = run_command(remote_command)
+            if not success:
+                print(f"❌ Failed to execute: {entry['type']} {formatted_command}. Exiting, ask for help.")
+                return False
+    return True
+    
+    # Execute special setup commands
+    # special_commands = yaml_commands["custom_commands"].get("special_commands", {})
+    # for setup_name, commands in special_commands.items():
+    #     for entry in commands:
+    #         if isinstance(entry, dict):
+    #             command_type = entry.get("type", "shell")
+    #             command = entry.get("command", "")
+    #         else:
+    #             command_type = "shell"
+    #             command = entry
 
+    #         formatted_command = command.format(
+    #             cscs_username=cscs_username,
+    #             remotehost=remotehost,
+    #             qe_uenv=qe_uenv,
+    #             python_version=python_version,
+    #             conda_init=conda_init,
+    #             config_files=config_files
+    #         )
+            
+    #         ssh_command = ["ssh", remotehost, formatted_command] if command_type == "ssh" else formatted_command.split()
+    #         output, success = run_command(ssh_command)
+    #         if not success:
+    #             print(f"❌ Failed to execute: {formatted_command}. Exiting, ask for help.")
+    #             return False
+    
+    return True
 
 

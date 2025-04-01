@@ -1,4 +1,5 @@
 import os
+from copy import deepcopy
 import ipywidgets as ipw
 from IPython.display import display
 import time
@@ -10,34 +11,98 @@ from aiida import load_profile
 from aiida.orm import load_node
 from aiida.orm import QueryBuilder, WorkChainNode, StructureData, Node
 
-#ssh_config_data = config.get("ssh_config", "")
-def check_for_updates(selected_grant=''):
-    """Check if there is a new update available and pull changes if necessary."""
-    
+# Check repository of config files
+def check_repository():
+    """Check if the repository exists and pull the latest changes."""
     # Ensure the repository exists
     if not os.path.exists(GIT_REPO_PATH):
         if not clone_repository():
-            return "<b style='color:red;'>❌ Failed to clone the repository. Please check your configuration.</b>",{},{}
+            return False,"<b style='color:red;'>❌ Failed to clone the repository. Please check your configuration.</b>"
     
     local_commit = get_local_commit()
     remote_commit = get_latest_remote_commit()
     
     if not local_commit or not remote_commit:
-        return "<b style='color:red;'>❌ Unable to check for updates.</b>",{},{}
+        return False,"<b style='color:red;'>❌ Unable to check for updates.</b>"
 
     if local_commit != remote_commit:
         if not pull_latest_changes():
-            return "<b style='color:red;'>❌ Failed to update the repository.</b>",{},{}
-    
-    status,msg,updates_needed,config = process_aiida_configuration(configuration_file, config_path,selected_grant)
+            return False,"<b style='color:red;'>❌ Failed to update the repository.</b>"
+    return True,"<b style='color:green;'>✅ Repository is up to date.</b>"  
+
+def get_config(file_path='/home/jovyan/opt/aiidalab-alps-files/config.yml', config_widgets={}):
+    """Get the configuration from the YAML file."""
+    # Verifica che tutti i widget siano selezionati
+    for key in config_widgets:
+        if config_widgets[key].value == "select":
+            return f"please select {key}", {}
+
+    # Verifica lo stato del repository
+    status_ok, msg = check_repository()
+    if not status_ok:
+        return msg, {}
+
+    # Carica lo YAML
+    with open(file_path, 'r') as f:
+        data = yaml.safe_load(f)
+
+    variables = data.get("variables", {})
+    widgets = data.get("widgets", {})
+
+    # Funzione per sostituire {key} in una stringa
+    def replace_in_string(s, replacements):
+        for key, value in replacements.items():
+            s = s.replace(f"{{{key}}}", value)
+        return s
+
+    # Sostituzione ricorsiva in dizionari, liste e stringhe
+    def recursive_replace(obj, replacements):
+        if isinstance(obj, dict):
+            return {k: recursive_replace(v, replacements) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [recursive_replace(item, replacements) for item in obj]
+        elif isinstance(obj, str):
+            return replace_in_string(obj, replacements)
+        else:
+            return obj
+
+    # Prima passata: ottieni i valori dei widget
+    widget_replacements = {
+        key: config_widgets[key].value
+        for key in widgets if key in config_widgets
+    }
+
+    # Sostituisci {widget} dentro alle variabili
+    for key, value in variables.items():
+        if isinstance(value, str):
+            variables[key] = replace_in_string(value, widget_replacements)
+
+    # Crea un dizionario con tutte le sostituzioni da applicare allo YAML intero
+    all_replacements = {}
+    all_replacements.update(widget_replacements)
+    all_replacements.update({
+        key: value for key, value in variables.items()
+        if isinstance(value, str)
+    })
+
+    # Applica tutte le sostituzioni allo YAML
+    data = recursive_replace(data, all_replacements)
+
+    return '', data
+
+
+
+def check_for_updates(config):
+    """Checks teh config file."""    
+    status,msg,updates_needed = process_aiida_configuration(config, config_path)
     if not status:
-        return msg,{},config
+        return msg,{}
     if not updates_needed:
-        return "<b style='color:green;'>✅ Your configuration is up to date.</b>",{},config
+        return "<b style='color:green;'>✅ Your configuration is up to date.</b>",{}
     else:
-        return msg,updates_needed,config
+        return msg,updates_needed
     
-def process_aiida_configuration(configuration_file, config_path,selected_grant):
+def process_aiida_configuration(config, config_path):
     """
     Reads the YAML configuration file, renames the existing SSH config, 
     creates a new SSH config from the YAML file, and checks installed vs. missing AiiDA computers.
@@ -48,17 +113,9 @@ def process_aiida_configuration(configuration_file, config_path,selected_grant):
     """
     updates_needed={}
     # Convert to Path objects
-    configuration_file = Path(configuration_file)
     config_path = Path(config_path)
     result_msg = ""
-    
-    # Read the YAML configuration file
-    with open(configuration_file, "r") as file:
-        config = yaml.safe_load(file)
         
-    if selected_grant == '':
-        return False, "<b style='color:red;'>⬜  Please select a grant to enable checking.</b>",{},config
-    
     # Check ssh_config
     config_ok,msg,config_hosts = check_ssh_config(config_path, config['computers'])
     result_msg +=msg
@@ -76,7 +133,7 @@ def process_aiida_configuration(configuration_file, config_path,selected_grant):
     status_codes,msg,active_codes,not_active_codes = aiida_codes()
     result_msg +=msg
     if not (status_computers and status_codes):
-        return False,result_msg + msg,{}
+        return False,result_msg + msg
                            
         
     # Check if each defined computer exists in AiiDA and is up-to-date
@@ -93,27 +150,21 @@ def process_aiida_configuration(configuration_file, config_path,selected_grant):
 
     # Checking computers loop over grants
     for comp, comp_data in defined_computers.items():
-        for grant in defined_grants:
-            full_comp = f"{comp}_{grant}"
-            if grant == selected_grant:
-                install_this = True
-            else:
-                install_this = False
-            if full_comp in active_computers:
-                result_msg += f"✅⬜ Computer '{full_comp}' is already installed in AiiDA, checking for its configuration.<br>"
-                is_up_to_date, msg = compare_computer_configuration(full_comp, comp_data)
-                result_msg += msg
-                if not is_up_to_date:  # Only add to updates_needed if not up-to-date
-                    updates_needed.setdefault('computers', {})[full_comp] = {'hide':True,'rename': True,'install':install_this}
+        full_comp = comp_data['setup']['label']
+        if full_comp in active_computers:
+            result_msg += f"✅⬜ Computer '{full_comp}' is already installed in AiiDA, checking for its configuration.<br>"
+            is_up_to_date, msg = compare_computer_configuration(full_comp, comp_data)
+            result_msg += msg
+            if not is_up_to_date:  # Only add to updates_needed if not up-to-date
+                updates_needed.setdefault('computers', {})[full_comp] = {'hide':True,'rename': True,'install':True}
 
-            elif full_comp in not_active_computers:
-                result_msg += f"⬜ Computer '{full_comp}' is listed but NOT active in AiiDA.<br>"
-                updates_needed.setdefault('computers', {})[full_comp] = {'hide':False,'rename': True,'install':install_this}
+        elif full_comp in not_active_computers:
+            result_msg += f"⬜ Computer '{full_comp}' is listed but NOT active in AiiDA.<br>"
+            updates_needed.setdefault('computers', {})[full_comp] = {'hide':False,'rename': True,'install':True}
 
-            else: #here distinguish between all grants and selected grant
-                if grant in config['grants'][comp] and install_this:
-                    result_msg += f"❌ Computer '{full_comp}' is completely missing from AiiDA.<br>"
-                    updates_needed.setdefault('computers', {})[full_comp] = {'hide':False,'rename': False,'install':install_this}
+        else: #here distinguish between all grants and selected grant
+            result_msg += f"❌ Computer '{full_comp}' is completely missing from AiiDA.<br>"
+            updates_needed.setdefault('computers', {})[full_comp] = {'hide':False,'rename': False,'install':True}
 
     # Checking codes
     defined_codes = config.get("codes", {})
@@ -123,7 +174,7 @@ def process_aiida_configuration(configuration_file, config_path,selected_grant):
     
     # To do. loop on active codes with grant that is old, --> hide
     for _, code_data in defined_codes.items(): 
-        computer = code_data['computer']+f"_{selected_grant}"
+        computer = defined_computers[code_data['computer']]['setup']['label']
         computer_up_to_date = computer not in updates_needed.get('computers', {})
         code_label = f"{code_data['label']}@{computer}"
 
@@ -152,11 +203,12 @@ def process_aiida_configuration(configuration_file, config_path,selected_grant):
     # To do: Check if cusntom app installations are needed
         
 
-    return True,result_msg,updates_needed,config
+    return True,result_msg,updates_needed
 
-def setup_computers(computers_to_setup,defined_computers,account=None):
+def setup_computers(computers_to_setup,defined_computers):
     status = True
     for computer in computers_to_setup:
+        print("CHECKING COMPUTER",computer)
         computer_name = computer.split('_')[0]
         _, _, grant = computer.partition('_') # gives '' if no _ is found
         print(f"🔄 Setting up computer '{computer_name}' with grant {grant} as {computer}")
