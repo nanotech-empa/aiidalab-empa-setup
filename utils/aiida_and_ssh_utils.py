@@ -147,8 +147,7 @@ def setup_aiida_computer(computer_name, config, hide=False, torelabel=False, ins
     """
     Sets up an AiiDA computer using `verdi computer setup` and configures SSH.
     """
-    setup = config["setup"]
-    ssh_config = config["config"]
+
     
     if hide:
         relabeled = relabel(computer_name) if torelabel else computer_name
@@ -160,9 +159,11 @@ def setup_aiida_computer(computer_name, config, hide=False, torelabel=False, ins
             if not success:
                 print(f"❌ Error relabelling/deactivating '{computer_name}': {output}")
                 return False
-        print(f"✅ Successfully relabeled computer '{computer_name}' to '{relabeled}'.")
+        print(f"✅ Successfully relabeled/hidden computer '{computer_name}' to '{relabeled}'.")
 
     if install:
+        setup = config["setup"]
+        ssh_config = config["config"]
         setup_command = [
             "verdi", "computer", "setup",
             "--label", computer_name,
@@ -207,14 +208,12 @@ def setup_aiida_computer(computer_name, config, hide=False, torelabel=False, ins
         "--non-interactive",
     ]
 
-    # Remove empty options (proxy_jump and proxy_command if they are empty)
-    #configure_command = [arg for arg in configure_command if arg.strip()]
     
-    output, success = run_command(configure_command)
-    if not success:
-        print(f"❌ Error configuring SSH for computer '{computer_name}': {output}")
-        return False
-    print(f"✅ Successfully configured SSH for computer '{computer_name}'.")        
+        output, success = run_command(configure_command)
+        if not success:
+            print(f"❌ Error configuring SSH for computer '{computer_name}': {output}")
+            return False
+        print(f"✅ Successfully configured SSH for computer '{computer_name}'.")        
     
         
     return True

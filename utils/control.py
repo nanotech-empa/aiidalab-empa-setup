@@ -139,16 +139,18 @@ def process_aiida_configuration(config, config_path):
     # Check if each defined computer exists in AiiDA and is up-to-date
     defined_computers = config.get("computers", {})
 
-    # Checking for olld grants
-    defined_grants = [grant for grants_list in config["grants"].values() for grant in grants_list]
+    # Checking for old grants
+    defined_grants = config['widgets']['grant']
     for computer in active_computers:
         if computer != 'localhost':
             its_grant = computer.split('_')[-1]
+            if its_grant == computer:
+                its_grant = 'notspecfied'
             if its_grant not in defined_grants:
                 result_msg += f"⚠️ Computer '{computer}' is installed in AiiDA but its grant '{its_grant}' is not defined in the configuration file.<br>"
                 updates_needed.setdefault('computers', {})[computer] = {'hide':True,'rename': False,'install':False}
 
-    # Checking computers loop over grants
+    # Checking computers
     for comp, comp_data in defined_computers.items():
         full_comp = comp_data['setup']['label']
         if full_comp in active_computers:
@@ -211,8 +213,9 @@ def setup_computers(computers_to_setup,defined_computers):
         print("CHECKING COMPUTER",computer)
         computer_name = computer.split('_')[0]
         _, _, grant = computer.partition('_') # gives '' if no _ is found
-        print(f"🔄 Setting up computer '{computer_name}' with grant {grant} as {computer}")
-        status = setup_aiida_computer(computer, defined_computers[computer_name],hide=computers_to_setup[computer].get('hide',False),
+        print(f"🔄 Dealing with '{computer}'")
+        config_computers = defined_computers.get(computer_name,{})
+        status = setup_aiida_computer(computer, config_computers,hide=computers_to_setup[computer].get('hide',False),
                              torelabel=computers_to_setup[computer].get('rename',False),
                              install=computers_to_setup[computer].get('install',False),
                              grant=grant
