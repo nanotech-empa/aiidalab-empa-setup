@@ -16,14 +16,14 @@ class ConfigAiiDAlabApp(ipw.VBox):
         self.check = True # set to False while applying updates and then set to True again
 
         # Check for updates button
-        self.check_button = ipw.Button(description="Check for updates", button_style="info")
+        self.check_button = ipw.Button(description="Inspect updates", button_style="info")
         self.check_button.on_click(self.check_for_all_updates)
         # Start button
-        self.start_button = ipw.Button(description="Start", button_style="primary")
+        self.start_button = ipw.Button(description="Apply updates", button_style="primary",disabled=True)
         self.start_button.on_click(self.run_configuration)
 
         # Clear button
-        self.clear_button = ipw.Button(description="Clear", button_style="warning") 
+        self.clear_button = ipw.Button(description="Clear logs", button_style="warning") 
         self.clear_button.on_click(self.clear_output)
 
         # Output display
@@ -72,10 +72,12 @@ class ConfigAiiDAlabApp(ipw.VBox):
             
                 
     def widgets_from_yaml(self,file_path='/home/jovyan/opt/aiidalab-alps-files/config.yml'):
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         status_ok,msg = check_repository()
         if not status_ok:
-            self.update_message.value = "❌ Repository is not cloned"
+            self.update_message.value = f"<b>{timestamp}</b>: ❌ Repository is not cloned"
             return None
+        self.update_message.value = f"<b>{timestamp}</b>: {msg}"
         with open(file_path, 'r') as f:
             data = yaml.safe_load(f)
         
@@ -93,13 +95,18 @@ class ConfigAiiDAlabApp(ipw.VBox):
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         msg = remove_green_check_lines(msg)
         if not msg:
-            msg = "✅ Nothing to report"
-        self.update_message.value = f"<b>{timestamp}</b>: {remove_green_check_lines(msg)}"   
+            self.update_message.value = f"<b>{timestamp}</b>: ✅ Nothing to report" 
+        else:
+            self.update_message.value = f"<b>{timestamp}</b>: {remove_green_check_lines(msg)}"   
         # check for zombie workcains  
         update_result = get_old_unfinished_workchains()
-        self.update_old_workchains.value = f"<b>Old WorkChains Check:</b> {update_result}"   
+        self.update_old_workchains.value = f"<b>Old WorkChains Check:</b> {update_result}"
+        self.start_button.disabled = False   
+        
     def clear_output(self,_):
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.output.clear_output()
+        self.update_message.value = f"<b>{timestamp}</b>: ✅ Nothing to report"
         self.subtitle.value = ""
       
     def run_configuration(self,_):
@@ -147,7 +154,9 @@ class ConfigAiiDAlabApp(ipw.VBox):
             if not status_ok:
                 print("❌ custom commands not set up correctly ask for help")
                 return
-            print("✅ Done")             
+            print("✅ Done") 
+        self.start_button.disabled = True
+        self.update_message.value = f"<b>{timestamp}</b>: ✅ Nothing to report"           
         # if self.qe_postprocess_checkbox.value:
             
         #     computer = self.config['codes']['pw']['computer']

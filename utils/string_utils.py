@@ -95,4 +95,3 @@ def normalize_text(text):
 
     # Join lines back together while preserving newlines
     return "\n".join(lines)
-    

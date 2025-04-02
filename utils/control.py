@@ -1,5 +1,6 @@
 import os
 from copy import deepcopy
+from itertools import product
 import ipywidgets as ipw
 from IPython.display import display
 import time
@@ -14,8 +15,10 @@ from aiida.orm import QueryBuilder, WorkChainNode, StructureData, Node
 # Check repository of config files
 def check_repository():
     """Check if the repository exists and pull the latest changes."""
+    msg = "<b style='color:green;'>✅ Repository is up to date.</b>"
     # Ensure the repository exists
     if not os.path.exists(GIT_REPO_PATH):
+        msg = "<b style='color:orange;'>⚠️ Repository updated. Please inspect and then apply changes.</b>"
         if not clone_repository():
             return False,"<b style='color:red;'>❌ Failed to clone the repository. Please check your configuration.</b>"
     
@@ -28,14 +31,16 @@ def check_repository():
     if local_commit != remote_commit:
         if not pull_latest_changes():
             return False,"<b style='color:red;'>❌ Failed to update the repository.</b>"
-    return True,"<b style='color:green;'>✅ Repository is up to date.</b>"  
+        else:
+            msg = "<b style='color:orange;'>⚠️ Repository updated. Please apply changes.</b>"
+    return True,msg  
 
 def get_config(file_path='/home/jovyan/opt/aiidalab-alps-files/config.yml', config_widgets={}):
     """Get the configuration from the YAML file."""
     # Verifica che tutti i widget siano selezionati
     for key in config_widgets:
         if config_widgets[key].value == "select":
-            return f"please select {key}", {}
+            return f"<b style='color:red;'>❌please select {key}</b>", {}
 
     # Verifica lo stato del repository
     status_ok, msg = check_repository()
@@ -141,6 +146,8 @@ def process_aiida_configuration(config, config_path):
 
     # Checking for old grants
     defined_grants = config['widgets']['grant']
+    defined_grants += ['nogrant']
+    defined_grants.remove('select')
     for computer in active_computers:
         if computer != 'localhost':
             its_grant = computer.split('_')[-1]
@@ -173,6 +180,19 @@ def process_aiida_configuration(config, config_path):
 
     # Check if each defined code exists in AiiDA and is up-to-date
     # in the yaml configuration a code definition also include the computer
+ 
+    # Hide unclassified codes
+    # Build valid combinations
+    valid_computer_grants = [
+        f"{comp}_{grant}" for comp, grant in product(defined_computers.keys(), defined_grants)
+    ]
+
+    # Add special standalone entries
+    valid_computer_grants += ["localhost","tigu"]
+    for codename, code_pk in active_codes:
+        if codename.split("@", 1)[1] not in valid_computer_grants:
+            result_msg += f"⚠️ Code '{codename}' is installed in AiiDA but its computer/grant is not defined in the configuration file.<br>"
+            updates_needed.setdefault('codes', {})[codename] = {'hide':code_pk,'rename':code_pk,'install':False}
     
     # To do. loop on active codes with grant that is old, --> hide
     for _, code_data in defined_codes.items(): 
@@ -182,7 +202,7 @@ def process_aiida_configuration(config, config_path):
 
         # Default: No update needed
         msg = f"✅ Code {code_label} is already installed in AiiDA.<br>"
-
+        
         if computer_up_to_date:  # Computer is up-to-date, check renaming needs
             code_pk = next((pk for codename, pk in active_codes if codename == code_label), None)
             if code_pk is not None:
@@ -227,23 +247,28 @@ def setup_codes(codes_to_setup,config):
     status = True
     for full_code in codes_to_setup:
         # pw-7.4:v2@daint.alps_s1267
+        hide=codes_to_setup[full_code].get('hide',False)
+        pktorelabel=codes_to_setup[full_code].get('rename',False)
+        install=codes_to_setup[full_code].get('install',False)
         code = full_code.split('@')[0].split('-')[0] # pw
-        code_data = defined_codes[code]
-        computer = code_data['computer']
-        hostname = config['computers'][computer]['setup']['hostname']
-        prepend_text = code_data.get("prepend_text", "")
-        match = re.search(r"#SBATCH --uenv=([\w\-/.:]+)", prepend_text)
-        if match:
-            uenv_value = match.group(1)  # Extract matched value
-            print(f"⬜  Need uenv: {uenv_value} for '{full_code}'")
-            if uenv_value not in uenvs:
-                uenvs.append((hostname,uenv_value))
-        else:
-            print(f"✅ No uenv needed for '{full_code}'")
+        code_data={}
+        if install:
+            code_data = defined_codes[code]
+            computer = code_data['computer']
+            hostname = config['computers'][computer]['setup']['hostname']
+            prepend_text = code_data.get("prepend_text", "")
+            match = re.search(r"#SBATCH --uenv=([\w\-/.:]+)", prepend_text)
+            if match:
+                uenv_value = match.group(1)  # Extract matched value
+                print(f"⬜  Need uenv: {uenv_value} for '{full_code}'")
+                if uenv_value not in uenvs:
+                    uenvs.append((hostname,uenv_value))
+            else:
+                print(f"✅ No uenv needed for '{full_code}'")
             
-        status = setup_aiida_code(full_code, code_data,hide=codes_to_setup[full_code].get('hide',False),
-                            pktorelabel=codes_to_setup[full_code].get('rename',False),
-                            install=codes_to_setup[full_code].get('install',False))
+        status = setup_aiida_code(full_code, code_data,hide=hide,
+                            pktorelabel=pktorelabel,
+                            install=install)
         
             
 
@@ -328,84 +353,6 @@ def manage_uenv_images(uenvs):
 
     print("✅ UENV management complete.")
     return True
-
-# copying scripts and data directories to daint, may take a while
-
-def copy_scripts(cscs_username,remotehost):# Define commands
-    ssh_commands = [
-        f"mkdir -p /users/{cscs_username}/src",
-    ]
-
-    scp_commands = [
-        f"scp {config_files}/mps-wrapper.sh {remotehost}:/users/{cscs_username}/bin/",
-        f"scp -r {config_files}/cp2k {remotehost}:/users/{cscs_username}/src/"
-    ]
-
-    # Execute SSH commands
-    for cmd in ssh_commands:
-        command_out,command_ok = run_command(cmd, ssh=True,remotehost=remotehost)
-        if not command_ok:
-            return
-
-    # Execute SCP commands
-    for cmd in scp_commands:
-        command_out,command_ok = run_command(cmd)
-        if not command_ok(cmd):
-            return
-
-def setup_phonopy(cscs_username, remotehost):
-    conda_init = f"source /users/{cscs_username}/miniconda3/bin/activate"
-    commands = [
-        ["ssh", remotehost, "if [ ! -f Miniconda3-latest-Linux-aarch64.sh ]; then wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-aarch64.sh; fi"],
-        ["ssh", remotehost, f"if [ ! -d /users/{cscs_username}/miniconda3 ]; then bash Miniconda3-latest-Linux-aarch64.sh -b -p /users/{cscs_username}/miniconda3; fi"],
-        ["scp", f"{config_files}/bashrc_template", f"{remotehost}:/users/{cscs_username}"],
-        ["ssh", remotehost, "mv .bashrc .old_bashrc"],
-        ["ssh", remotehost, "mv bashrc_template .bashrc"],
-        ["ssh", remotehost, f"bash -l -c '{conda_init} && conda env list | grep -q \"^phonopy \" && echo \"Environment exists\" || conda create -n phonopy -c conda-forge phonopy seekpath'"],
-    ]
-    
-    for command in commands:
-        command_out, command_ok = run_command(command)
-        if not command_ok:
-            print(f"❌ Failed to execute: {' '.join(command)}. Exiting, ask for help.")
-            return False
-    
-    _ = setup_codes(["phonopy.yml"])
-    return True
-
-def setup_critic2(cscs_username, qe_uenv, remotehost,python_version):
-    required_packages = ["pymatgen", "cloudpickle", "scikit-image"]
-    
-    env_setup_command = ["ssh", remotehost, f"conda env list | grep -q '^py39 ' || conda create -n py39 -c conda-forge python={python_version} {' '.join(required_packages)} -y"]
-    run_command(env_setup_command)
-    
-    check_packages_cmd = ["ssh", remotehost, "conda activate py39 && conda list | awk '{print $1}'"]
-    output, _ = run_command(check_packages_cmd)
-    
-    installed_packages = output.split() if output else []
-    missing_packages = [pkg for pkg in required_packages if pkg not in installed_packages]
-    
-    if missing_packages:
-        install_cmd = ["ssh", remotehost, f"conda activate py39 && conda install -n py39 -c conda-forge {' '.join(missing_packages)} -y"]
-        run_command(install_cmd)
-    
-    #_ = setup_codes(["python.yml"])
-    
-    commands = [
-        ["ssh", remotehost, "if [ ! -d 'critic2' ]; then git clone https://github.com/aoterodelaroza/critic2.git; fi"],
-        ["ssh", remotehost, f"if [ ! -f /users/{cscs_username}/critic2/build/src/critic2 ]; then cd critic2 && mkdir -p build && cd build && uenv run {qe_uenv} cmake .. && uenv run {qe_uenv} make; fi"],
-        ["ssh", remotehost, f"ls /users/{cscs_username}/critic2/build/src/critic2"]
-    ]
-    
-    for command in commands:
-        command_out, command_ok = run_command(command)
-        if not command_ok:
-            print(f"❌ Failed to execute: {' '.join(command)}. Exiting, ask for help.")
-            return False
-    
-    #_ = setup_codes(["critic2.yml"])
-    return True
-
 
 def execute_special_setup(setup_name, cscs_username, remotehost, qe_uenv="", python_version=""):
     """Execute a setup sequence from YAML file."""
