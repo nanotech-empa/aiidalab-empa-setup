@@ -354,61 +354,6 @@ def manage_uenv_images(uenvs):
     print("✅ UENV management complete.")
     return True
 
-def execute_special_setup(setup_name, cscs_username, remotehost, qe_uenv="", python_version=""):
-    """Execute a setup sequence from YAML file."""
-    yaml_commands = load_yaml_commands()
-    
-    if setup_name not in yaml_commands["special_commands"]:
-        print(f"❌ Setup '{setup_name}' not found in YAML file. Exiting.")
-        return False
-    
-    conda_init = yaml_commands.get("conda_init", "source /users/{cscs_username}/miniconda3/bin/activate").format(cscs_username=cscs_username)
-    
-    # Run environment setup commands if they exist
-    env_setup_commands = yaml_commands.get("env_setup_commands", {}).get(setup_name, [])
-    for entry in env_setup_commands:
-        formatted_command = entry["command"].format(
-            cscs_username=cscs_username,
-            remotehost=remotehost,
-            qe_uenv=qe_uenv,
-            python_version=python_version,
-            conda_init=conda_init
-        )
-        
-        ssh_command = ["ssh", remotehost, formatted_command] if entry["type"] == "ssh" else formatted_command.split()
-        output, success = run_command(ssh_command)
-        if not success:
-            print(f"❌ Failed to execute: {formatted_command}. Exiting, ask for help.")
-            return False
-    
-    # Run special setup commands
-    commands = yaml_commands["special_commands"][setup_name]
-    for entry in commands:
-        if isinstance(entry, dict):
-            command_type = entry.get("type", "shell")
-            command = entry.get("command", "")
-        else:
-            command_type = "shell"
-            command = entry
-        
-        formatted_command = command.format(
-            cscs_username=cscs_username,
-            remotehost=remotehost,
-            qe_uenv=qe_uenv,
-            python_version=python_version,
-            conda_init=conda_init
-        )
-        
-        ssh_command = ["ssh", remotehost, formatted_command] if command_type == "ssh" else formatted_command.split()
-        output, success = run_command(ssh_command)
-        if not success:
-            print(f"❌ Failed to execute: {formatted_command}. Exiting, ask for help.")
-            return False
-    return True
-
-
-
-
 #### CHECK for old unfinished Workchains
 def first_caller(node_pk, max_calls=5000):
     """

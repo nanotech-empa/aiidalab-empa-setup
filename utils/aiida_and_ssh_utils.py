@@ -1,4 +1,4 @@
-from .string_utils import  remove_placeholders, normalize_text, relabel,to_camel_case
+from .string_utils import   normalize_text, relabel,to_camel_case #remove_placeholders
 import subprocess
 import yaml
 import shutil
@@ -63,12 +63,16 @@ def compare_computer_configuration(computer_name, repository_computer_data):
         exported_config = yaml.safe_load(file)
 
     for entry in repository_setup:
-        str1, str2 = remove_placeholders(normalize_text(str(repository_setup[entry])), normalize_text(str(exported_setup.get(entry, ""))))
+        #str1, str2 = remove_placeholders(normalize_text(str(repository_setup[entry])), normalize_text(str(exported_setup.get(entry, ""))))
+        str1 = normalize_text(str(repository_setup[entry]))
+        str2 = normalize_text(str(exported_setup.get(entry, "")))
         if str1 != str2:
             return False, f"⚠️ **Setup Differences:** {entry}<br>"
 
     for entry in repository_config:
-        str1, str2 = remove_placeholders(normalize_text(str(repository_config[entry])), normalize_text(str(exported_config.get(entry, ""))))
+        #str1, str2 = remove_placeholders(normalize_text(str(repository_config[entry])), normalize_text(str(exported_config.get(entry, ""))))
+        str1 = normalize_text(str(repository_config[entry]))
+        str2 = normalize_text(str(exported_config.get(entry, "")))
         if str1 != str2:
             return False, f"⚠️ **Config Differences:** {entry}<br>"
 
@@ -88,7 +92,9 @@ def compare_code_configuration(code_label, repository_code_data):
         exported_setup = yaml.safe_load(file)
 
     for entry in repository_code_data:
-        str1, str2 = remove_placeholders(normalize_text(str(repository_code_data[entry])), normalize_text(str(exported_setup.get(entry, ""))))
+        #str1, str2 = remove_placeholders(normalize_text(str(repository_code_data[entry])), normalize_text(str(exported_setup.get(entry, ""))))
+        str1 = normalize_text(str(repository_code_data[entry]))
+        str2 = normalize_text(str(exported_setup.get(entry, "")))
         if str1 != str2:
             return False, f"⚠️ **Setup Differences:** {entry}<br>"
     
@@ -296,7 +302,7 @@ def check_ssh_config(config_path, config_from_yaml):
     
     return all_up_to_date, msg, reconfigure
 
-def update_ssh_config(config_path,ssh_config_data,username,rename=True):
+def update_ssh_config(config_path,ssh_config_data,rename=True):
     
     # Ensure config_path exists
     config_path.mkdir(parents=True, exist_ok=True)
@@ -311,7 +317,7 @@ def update_ssh_config(config_path,ssh_config_data,username,rename=True):
         
     file_content = ""
     for host in ssh_config_data:
-        ssh_config_data[host]['user'] = username
+        #ssh_config_data[host]['user'] = username
         file_content += f"Host {host}\n"
         for key, value in ssh_config_data[host].items():
             file_content += f"  {to_camel_case(key)} {value}\n"  # Capitalize the first letter of key
@@ -401,34 +407,6 @@ def execute_custom_commands(yaml_commands):
             if not success:
                 print(f"❌ Failed to execute: {entry['type']} {formatted_command}. Exiting, ask for help.")
                 return False
-    return True
-    
-    # Execute special setup commands
-    # special_commands = yaml_commands["custom_commands"].get("special_commands", {})
-    # for setup_name, commands in special_commands.items():
-    #     for entry in commands:
-    #         if isinstance(entry, dict):
-    #             command_type = entry.get("type", "shell")
-    #             command = entry.get("command", "")
-    #         else:
-    #             command_type = "shell"
-    #             command = entry
-
-    #         formatted_command = command.format(
-    #             cscs_username=cscs_username,
-    #             remotehost=remotehost,
-    #             qe_uenv=qe_uenv,
-    #             python_version=python_version,
-    #             conda_init=conda_init,
-    #             config_files=config_files
-    #         )
-            
-    #         ssh_command = ["ssh", remotehost, formatted_command] if command_type == "ssh" else formatted_command.split()
-    #         output, success = run_command(ssh_command)
-    #         if not success:
-    #             print(f"❌ Failed to execute: {formatted_command}. Exiting, ask for help.")
-    #             return False
-    
     return True
 
 
