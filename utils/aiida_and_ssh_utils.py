@@ -1,4 +1,4 @@
-from .string_utils import  remove_placeholders, normalize_text, relabel,to_camel_case
+from .string_utils import   normalize_text, relabel,to_camel_case #remove_placeholders
 import subprocess
 import yaml
 import shutil
@@ -63,12 +63,16 @@ def compare_computer_configuration(computer_name, repository_computer_data):
         exported_config = yaml.safe_load(file)
 
     for entry in repository_setup:
-        str1, str2 = remove_placeholders(normalize_text(str(repository_setup[entry])), normalize_text(str(exported_setup.get(entry, ""))))
+        #str1, str2 = remove_placeholders(normalize_text(str(repository_setup[entry])), normalize_text(str(exported_setup.get(entry, ""))))
+        str1 = normalize_text(str(repository_setup[entry]))
+        str2 = normalize_text(str(exported_setup.get(entry, "")))
         if str1 != str2:
             return False, f"⚠️ **Setup Differences:** {entry}<br>"
 
     for entry in repository_config:
-        str1, str2 = remove_placeholders(normalize_text(str(repository_config[entry])), normalize_text(str(exported_config.get(entry, ""))))
+        #str1, str2 = remove_placeholders(normalize_text(str(repository_config[entry])), normalize_text(str(exported_config.get(entry, ""))))
+        str1 = normalize_text(str(repository_config[entry]))
+        str2 = normalize_text(str(exported_config.get(entry, "")))
         if str1 != str2:
             return False, f"⚠️ **Config Differences:** {entry}<br>"
 
@@ -88,7 +92,9 @@ def compare_code_configuration(code_label, repository_code_data):
         exported_setup = yaml.safe_load(file)
 
     for entry in repository_code_data:
-        str1, str2 = remove_placeholders(normalize_text(str(repository_code_data[entry])), normalize_text(str(exported_setup.get(entry, ""))))
+        #str1, str2 = remove_placeholders(normalize_text(str(repository_code_data[entry])), normalize_text(str(exported_setup.get(entry, ""))))
+        str1 = normalize_text(str(repository_code_data[entry]))
+        str2 = normalize_text(str(exported_setup.get(entry, "")))
         if str1 != str2:
             return False, f"⚠️ **Setup Differences:** {entry}<br>"
     
@@ -148,18 +154,17 @@ def setup_aiida_computer(computer_name, config, hide=False, torelabel=False, ins
     Sets up an AiiDA computer using `verdi computer setup` and configures SSH.
     """
 
-    
+    relabeled = relabel(computer_name) if torelabel else computer_name
+    commands = [["verdi", "computer", "relabel", computer_name, relabeled]] if torelabel else []    
     if hide:
-        relabeled = relabel(computer_name) if torelabel else computer_name
-        commands = [["verdi", "computer", "relabel", computer_name, relabeled]] if torelabel else []
         commands.append(["verdi", "computer", "disable", relabeled, "aiida@localhost"])
         
-        for command in commands:
-            output, success = run_command(command)
-            if not success:
-                print(f"❌ Error relabelling/deactivating '{computer_name}': {output}")
-                return False
-        print(f"✅ Successfully relabeled/hidden computer '{computer_name}' to '{relabeled}'.")
+    for command in commands:
+        output, success = run_command(command)
+        if not success:
+            print(f"❌ Error relabelling/deactivating '{computer_name}': {output}")
+            return False
+    print(f"✅ Successfully relabeled/hidden computer '{computer_name}' to '{relabeled}'.")
 
     if install:
         setup = config["setup"]
@@ -187,26 +192,32 @@ def setup_aiida_computer(computer_name, config, hide=False, torelabel=False, ins
         print(f"✅ Successfully set up computer '{computer_name}'.")
         
         configure_command = [
-        "verdi", "computer", "configure", setup["transport"], computer_name,
-        "--username", ssh_config["username"],
-        "--port", str(ssh_config["port"]),
-        "--look-for-keys" if ssh_config["look_for_keys"] else "--no-look-for-keys",
-        "--key-filename", ssh_config["key_filename"],
-        "--timeout", str(ssh_config["timeout"]),
-        "--allow-agent" if ssh_config["allow_agent"] else "--no-allow-agent",
-        "--proxy-jump", ssh_config["proxy_jump"] if ssh_config["proxy_jump"] else " ",
-        "--proxy-command", ssh_config["proxy_command"] if ssh_config["proxy_command"] else " ",
-        "--compress" if ssh_config["compress"] else "--no-compress",
-        "--gss-auth", str(ssh_config["gss_auth"]),
-        "--gss-kex", str(ssh_config["gss_kex"]),
-        "--gss-deleg-creds", str(ssh_config["gss_deleg_creds"]),
-        "--gss-host", ssh_config["gss_host"],
-        "--load-system-host-keys" if ssh_config["load_system_host_keys"] else "--no-load-system-host-keys",
-        "--key-policy", ssh_config["key_policy"],
-        "--use-login-shell" if ssh_config["use_login_shell"] else "--no-use-login-shell",
-        "--safe-interval", str(ssh_config["safe_interval"]),
-        "--non-interactive",
-    ]
+            "verdi", "computer", "configure", setup["transport"], computer_name,
+            "--username", ssh_config["username"],
+            "--port", str(ssh_config["port"]),
+            "--look-for-keys" if ssh_config["look_for_keys"] else "--no-look-for-keys",
+            "--key-filename", ssh_config["key_filename"],
+            "--timeout", str(ssh_config["timeout"]),
+            "--allow-agent" if ssh_config["allow_agent"] else "--no-allow-agent",
+            "--compress" if ssh_config["compress"] else "--no-compress",
+            "--gss-auth", str(ssh_config["gss_auth"]),
+            "--gss-kex", str(ssh_config["gss_kex"]),
+            "--gss-deleg-creds", str(ssh_config["gss_deleg_creds"]),
+            "--gss-host", ssh_config["gss_host"],
+            "--load-system-host-keys" if ssh_config["load_system_host_keys"] else "--no-load-system-host-keys",
+            "--key-policy", ssh_config["key_policy"],
+            "--use-login-shell" if ssh_config["use_login_shell"] else "--no-use-login-shell",
+            "--safe-interval", str(ssh_config["safe_interval"]),
+            "--non-interactive",
+        ]
+
+        # Conditionally append --proxy-jump if not empty
+        if ssh_config.get("proxy_jump"):
+            configure_command.extend(["--proxy-jump", ssh_config["proxy_jump"]])
+
+        # Conditionally append --proxy-command if not empty
+        if ssh_config.get("proxy_command"):
+            configure_command.extend(["--proxy-command", ssh_config["proxy_command"]])
 
     
         output, success = run_command(configure_command)
@@ -296,7 +307,7 @@ def check_ssh_config(config_path, config_from_yaml):
     
     return all_up_to_date, msg, reconfigure
 
-def update_ssh_config(config_path,ssh_config_data,username,rename=True):
+def update_ssh_config(config_path,ssh_config_data,rename=True):
     
     # Ensure config_path exists
     config_path.mkdir(parents=True, exist_ok=True)
@@ -311,7 +322,7 @@ def update_ssh_config(config_path,ssh_config_data,username,rename=True):
         
     file_content = ""
     for host in ssh_config_data:
-        ssh_config_data[host]['user'] = username
+        #ssh_config_data[host]['user'] = username
         file_content += f"Host {host}\n"
         for key, value in ssh_config_data[host].items():
             file_content += f"  {to_camel_case(key)} {value}\n"  # Capitalize the first letter of key
@@ -401,34 +412,6 @@ def execute_custom_commands(yaml_commands):
             if not success:
                 print(f"❌ Failed to execute: {entry['type']} {formatted_command}. Exiting, ask for help.")
                 return False
-    return True
-    
-    # Execute special setup commands
-    # special_commands = yaml_commands["custom_commands"].get("special_commands", {})
-    # for setup_name, commands in special_commands.items():
-    #     for entry in commands:
-    #         if isinstance(entry, dict):
-    #             command_type = entry.get("type", "shell")
-    #             command = entry.get("command", "")
-    #         else:
-    #             command_type = "shell"
-    #             command = entry
-
-    #         formatted_command = command.format(
-    #             cscs_username=cscs_username,
-    #             remotehost=remotehost,
-    #             qe_uenv=qe_uenv,
-    #             python_version=python_version,
-    #             conda_init=conda_init,
-    #             config_files=config_files
-    #         )
-            
-    #         ssh_command = ["ssh", remotehost, formatted_command] if command_type == "ssh" else formatted_command.split()
-    #         output, success = run_command(ssh_command)
-    #         if not success:
-    #             print(f"❌ Failed to execute: {formatted_command}. Exiting, ask for help.")
-    #             return False
-    
     return True
 
 

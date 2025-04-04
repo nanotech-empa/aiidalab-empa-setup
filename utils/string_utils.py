@@ -37,61 +37,17 @@ def remove_green_check_lines(html_string):
     
     # Rejoin the lines back with <br> to maintain HTML format
     return "<br>".join(filtered_lines)
-
-def remove_placeholders(str1, str2, ignored_patterns=["cscsusername", "cscsaccount"]):
-    """
-    Removes one of the given placeholders if it appears in exactly one of the strings.
-    The corresponding portion in the other string (up to the next '/', '\n', or space) is also removed.
-
-    :param str1: First string.
-    :param str2: Second string.
-    :param ignored_patterns: List of placeholders to ignore if they appear in exactly one of the strings.
-    :return: Modified versions of str1 and str2.
-    """
-    
-    for ignored_pattern in ignored_patterns:
-        # Check if one string contains the placeholder but the other does not
-        if ignored_pattern in str1 and ignored_pattern not in str2:
-            username_str, other_str = str1, str2
-        elif ignored_pattern in str2 and ignored_pattern not in str1:
-            username_str, other_str = str2, str1
-        else:
-            continue  # If neither or both contain it, move to the next placeholder
-
-        # Find the position of the placeholder in the string that contains it
-        pos = username_str.find(ignored_pattern)
-        if pos == -1:
-            continue  # Should never happen, but just in case
-
-        # Remove the placeholder from the string that contains it
-        modified_username_str = username_str[:pos] + username_str[pos+len(ignored_pattern):]
-
-        # Remove the corresponding part from the other string up to the next '/', '\n', ' ' or end
-        match = re.search(r'[/\n ]', other_str[pos:])  # Find next '/' or '\n' after `pos`
-        if match:
-            end_pos = pos + match.start()  # Absolute position in the string
-            modified_other_str = other_str[:pos] + other_str[end_pos:]
-        else:
-            modified_other_str = other_str[:pos]  # No match found → Remove everything till end
-
-        # Update str1 and str2 for further processing
-        str1, str2 = modified_username_str, modified_other_str
-    return str1, str2
     
 def normalize_text(text):
     """
     - Removes extra empty lines.
     - Ensures a maximum of one space between words (but keeps line breaks).
-    - Removes everything after '#SBATCH --account=' up to the newline.
     """
     if text is None:
         return ""  # Treat None as empty string
 
     # Normalize each line: strip leading/trailing spaces and reduce multiple spaces to one
     lines = [re.sub(r"\s+", " ", line.strip()) for line in text.splitlines() if line.strip()]
-
-    # Replace '#SBATCH --account=' followed by anything with just '#SBATCH --account='
-    #lines = [re.sub(r"(#SBATCH --account=).*", r"\1", line) for line in lines]
 
     # Join lines back together while preserving newlines
     return "\n".join(lines)

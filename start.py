@@ -108,6 +108,7 @@ class ConfigAiiDAlabApp(ipw.VBox):
         self.output.clear_output()
         self.update_message.value = f"<b>{timestamp}</b>: ✅ Nothing to report"
         self.subtitle.value = ""
+        self.start_button.disabled = True
       
     def run_configuration(self,_):
         self.check = False
@@ -119,7 +120,7 @@ class ConfigAiiDAlabApp(ipw.VBox):
         with self.output:
             #self.output.clear_output()
             if "ssh_config" in self.updates_needed:
-                update_ssh_config(config_path,self.config['ssh_config'],self.username_widget.value,rename=self.updates_needed['ssh_config']['rename'])
+                update_ssh_config(config_path,self.config['ssh_config'],rename=self.updates_needed['ssh_config']['rename'])
                 if not set_ssh(self.config['computers'],self.updates_needed['ssh_config']['hosts']):
                     print("❌ ssh problem, ask for support")
                     return
@@ -156,32 +157,8 @@ class ConfigAiiDAlabApp(ipw.VBox):
                 return
             print("✅ Done") 
         self.start_button.disabled = True
-        self.update_message.value = f"<b>{timestamp}</b>: ✅ Nothing to report"           
-        # if self.qe_postprocess_checkbox.value:
-            
-        #     computer = self.config['codes']['pw']['computer']
-        #     remotehost = self.config['computers'][computer]['setup']['hostname']
-        #     #self.output.clear_output()
-        #     self.subtitle.value = "<h3>Setup Phonopy and Critic2</h3>"
-        #     with self.output:
-        #         print("🔄 Setting up phonopy")
-        #         phonopy_ok = setup_phonopy(cscs_username,remotehost)
-        #         if not phonopy_ok:
-        #             print("❌ phonopy not set up correctly ask for help")
-        #             return
-        #         print("✅ phonopy setup done")
-        #     self.output.clear_output()
-        #     self.subtitle.value = "<h3>Setup Critic2</h3>"  
-        #     with self.output:
-        #         print("🔄 Creating conda environment will take a while")
-        #         match = re.search(r"#SBATCH --uenv=([\w\-/.]+:\d+)", self.config['codes']['pw']['prepend_text'])
-        #         qe_uenv = match.group(1) if match else None
-        #         critic2_ok = setup_critic2(cscs_username,qe_uenv,remotehost,self.config['python_version'])
-        #         if not critic2_ok:
-        #             print("❌ critic2 not set up correctly ask for help")
-        #             return
-        #         print("✅ critic2 setup done")
-        # self.check = True
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.update_message.value = f"<b>{timestamp}</b>: ✅ Nothing to report" 
         return
 
 # Example function
