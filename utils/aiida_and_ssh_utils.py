@@ -154,18 +154,17 @@ def setup_aiida_computer(computer_name, config, hide=False, torelabel=False, ins
     Sets up an AiiDA computer using `verdi computer setup` and configures SSH.
     """
 
-    
+    relabeled = relabel(computer_name) if torelabel else computer_name
+    commands = [["verdi", "computer", "relabel", computer_name, relabeled]] if torelabel else []    
     if hide:
-        relabeled = relabel(computer_name) if torelabel else computer_name
-        commands = [["verdi", "computer", "relabel", computer_name, relabeled]] if torelabel else []
         commands.append(["verdi", "computer", "disable", relabeled, "aiida@localhost"])
         
-        for command in commands:
-            output, success = run_command(command)
-            if not success:
-                print(f"❌ Error relabelling/deactivating '{computer_name}': {output}")
-                return False
-        print(f"✅ Successfully relabeled/hidden computer '{computer_name}' to '{relabeled}'.")
+    for command in commands:
+        output, success = run_command(command)
+        if not success:
+            print(f"❌ Error relabelling/deactivating '{computer_name}': {output}")
+            return False
+    print(f"✅ Successfully relabeled/hidden computer '{computer_name}' to '{relabeled}'.")
 
     if install:
         setup = config["setup"]
@@ -193,26 +192,32 @@ def setup_aiida_computer(computer_name, config, hide=False, torelabel=False, ins
         print(f"✅ Successfully set up computer '{computer_name}'.")
         
         configure_command = [
-        "verdi", "computer", "configure", setup["transport"], computer_name,
-        "--username", ssh_config["username"],
-        "--port", str(ssh_config["port"]),
-        "--look-for-keys" if ssh_config["look_for_keys"] else "--no-look-for-keys",
-        "--key-filename", ssh_config["key_filename"],
-        "--timeout", str(ssh_config["timeout"]),
-        "--allow-agent" if ssh_config["allow_agent"] else "--no-allow-agent",
-        "--proxy-jump", ssh_config["proxy_jump"] if ssh_config["proxy_jump"] else " ",
-        "--proxy-command", ssh_config["proxy_command"] if ssh_config["proxy_command"] else " ",
-        "--compress" if ssh_config["compress"] else "--no-compress",
-        "--gss-auth", str(ssh_config["gss_auth"]),
-        "--gss-kex", str(ssh_config["gss_kex"]),
-        "--gss-deleg-creds", str(ssh_config["gss_deleg_creds"]),
-        "--gss-host", ssh_config["gss_host"],
-        "--load-system-host-keys" if ssh_config["load_system_host_keys"] else "--no-load-system-host-keys",
-        "--key-policy", ssh_config["key_policy"],
-        "--use-login-shell" if ssh_config["use_login_shell"] else "--no-use-login-shell",
-        "--safe-interval", str(ssh_config["safe_interval"]),
-        "--non-interactive",
-    ]
+            "verdi", "computer", "configure", setup["transport"], computer_name,
+            "--username", ssh_config["username"],
+            "--port", str(ssh_config["port"]),
+            "--look-for-keys" if ssh_config["look_for_keys"] else "--no-look-for-keys",
+            "--key-filename", ssh_config["key_filename"],
+            "--timeout", str(ssh_config["timeout"]),
+            "--allow-agent" if ssh_config["allow_agent"] else "--no-allow-agent",
+            "--compress" if ssh_config["compress"] else "--no-compress",
+            "--gss-auth", str(ssh_config["gss_auth"]),
+            "--gss-kex", str(ssh_config["gss_kex"]),
+            "--gss-deleg-creds", str(ssh_config["gss_deleg_creds"]),
+            "--gss-host", ssh_config["gss_host"],
+            "--load-system-host-keys" if ssh_config["load_system_host_keys"] else "--no-load-system-host-keys",
+            "--key-policy", ssh_config["key_policy"],
+            "--use-login-shell" if ssh_config["use_login_shell"] else "--no-use-login-shell",
+            "--safe-interval", str(ssh_config["safe_interval"]),
+            "--non-interactive",
+        ]
+
+        # Conditionally append --proxy-jump if not empty
+        if ssh_config.get("proxy_jump"):
+            configure_command.extend(["--proxy-jump", ssh_config["proxy_jump"]])
+
+        # Conditionally append --proxy-command if not empty
+        if ssh_config.get("proxy_command"):
+            configure_command.extend(["--proxy-command", ssh_config["proxy_command"]])
 
     
         output, success = run_command(configure_command)
