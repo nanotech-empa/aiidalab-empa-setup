@@ -3,6 +3,7 @@ import functools
 import ipywidgets as ipw
 from datetime import datetime
 from utils.control import * 
+from utils.aiida_and_ssh_utils import key_is_valid,get_old_unfinished_workchains
 __version__ = "v2025.0214"
 
 class ConfigAiiDAlabApp(ipw.VBox): 
@@ -13,6 +14,7 @@ class ConfigAiiDAlabApp(ipw.VBox):
         
         self.update_message = ipw.HTML("Nothing to report")
         self.update_old_workchains = ipw.HTML("")
+        self.running_workchains = ipw.HTML("")
         self.check = True # set to False while applying updates and then set to True again
 
         # Check for updates button
@@ -37,6 +39,7 @@ class ConfigAiiDAlabApp(ipw.VBox):
         super().__init__([
             self.title,
             self.update_old_workchains,  # Display updates for old workchains
+            self.running_workchains,  # Display running workchains
             self.update_message,  # Display general updates
             ipw.HBox([widget for widget in self.config_widgets.values()]),
             ipw.HBox([self.check_button,self.start_button, self.clear_button]),
@@ -89,19 +92,30 @@ class ConfigAiiDAlabApp(ipw.VBox):
         return widgets        
 
     def check_for_all_updates(self,_):
-        msg,self.config = get_config(config_widgets=self.config_widgets)
-        if msg =='':
-            msg,self.updates_needed = check_for_updates(self.config)
+        status_ok,msg,self.config = get_config(config_widgets=self.config_widgets)
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        if not status_ok:
+            self.update_message.value = f"<b>{timestamp}</b>: {msg}"
+            return
+        ssh_key_updated = key_is_valid(public_key_file=self.config['variables']['ssh_public_key'])
+        if not ssh_key_updated:
+            self.update_message.value = f"<b>{timestamp}</b>: ❌ SSH key is not valid, please update it"
+            return
+        if msg =='':
+            msg,self.updates_needed = check_for_updates(self.config)        
         msg = remove_green_check_lines(msg)
         if not msg:
             self.update_message.value = f"<b>{timestamp}</b>: ✅ Nothing to report" 
         else:
             self.update_message.value = f"<b>{timestamp}</b>: {remove_green_check_lines(msg)}"   
         # check for zombie workcains  
-        update_result = get_old_unfinished_workchains()
-        self.update_old_workchains.value = f"<b>Old WorkChains Check:</b> {update_result}"
-        self.start_button.disabled = False   
+        somerunning,msg = get_old_unfinished_workchains()
+        self.update_old_workchains.value = f"<b>Old WorkChains Check:</b> {msg}"
+        somerunning,msg = get_old_unfinished_workchains(cutoffdays=3)
+        if somerunning:
+            self.running_workchains.value = f"<b>There are running workchains, you cannot update:</b> {msg}"
+        else:
+            self.start_button.disabled = False   
         
     def clear_output(self,_):
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -140,7 +154,6 @@ class ConfigAiiDAlabApp(ipw.VBox):
             # setup codes and uenvs
             print("🔄 Setting up codes")
             status,uenvs = setup_codes(self.updates_needed.get('codes',{}),self.config)
-            qe_uenv = next((env[1] for env in uenvs if 'espresso' in env[1]), None)
             if len(uenvs) >0:
                 uenvs_ok = manage_uenv_images(uenvs)
                 if not uenvs_ok:
