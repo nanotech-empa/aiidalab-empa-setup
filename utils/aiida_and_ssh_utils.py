@@ -1,9 +1,14 @@
 from .string_utils import   normalize_text, relabel,to_camel_case #remove_placeholders
+from datetime import datetime,timedelta
 import subprocess
 import yaml
 import shutil
 import time
 import os
+import re
+from aiida.orm import QueryBuilder, WorkChainNode, StructureData, Node
+from aiida import load_profile
+from aiida.orm import load_node
 
 def run_command(command, max_retries=5,verbose=False):
     """
@@ -413,5 +418,139 @@ def execute_custom_commands(yaml_commands):
                 print(f"❌ Failed to execute: {entry['type']} {formatted_command}. Exiting, ask for help.")
                 return False
     return True
+    
+def parse_validity_time(public_key_file):
+    """Parse the validity time from the output."""
+    output = subprocess.run(
+        ["ssh-keygen", "-L", "-f", public_key_file],
+        encoding="utf-8",
+        capture_output=True,
+    ).stdout
 
+    matched_line = (
+        re.search(r"^.*{}.*$".format("Valid:"), output, flags=re.MULTILINE)
+        .group(0)
+        .split()
+    )
+    start = datetime.fromisoformat(matched_line[2])
+    end = datetime.fromisoformat(matched_line[4])
+    return start, end
 
+def key_is_valid(public_key_file = ''):
+    """Check if the key is valid."""
+    start, end = parse_validity_time(public_key_file)
+    if start < datetime.now() < end:
+        return True
+    else:
+        return False
+    
+#### CHECK for old unfinished Workchains
+def first_caller(node_pk, max_calls=5000):
+    """
+    Traces back to the first caller (root node) of a given node.
+    
+    :param node_pk: The PK of the node.
+    :param max_calls: Maximum recursion depth to prevent infinite loops.
+    :return: PK of the first caller.
+    """
+    num_calls = 0
+    caller = node_pk
+    while num_calls < max_calls:
+        try:
+            caller = load_node(caller).caller.pk
+        except AttributeError:
+            break  # No more parents, stop tracing
+        num_calls += 1
+    return caller
+
+def get_structuredata_descendants(parent_pk):
+    """
+    Returns all StructureData nodes that are descendants of a given node.
+    
+    :param parent_pk: The PK of the parent node (e.g., WorkChain PK).
+    :return: A list of StructureData node PKs.
+    """
+    qb = QueryBuilder()
+    qb.append(Node, filters={'id': parent_pk}, tag='parent')
+    qb.append(
+        StructureData, 
+        with_ancestors='parent',  # Search for descendants
+        project=['id']  # Retrieve PKs only
+    )
+    return [entry[0] for entry in qb.all()]
+
+def get_processes_with_structuredata_input(structure_pks):
+    """
+    Returns all CalcJob, WorkChain, and CalcFunction nodes that have 
+    a given StructureData node as an input.
+    
+    :param structure_pks: List of StructureData PKs.
+    :return: A list of process node PKs.
+    """
+    if not structure_pks:
+        return []
+    
+    qb = QueryBuilder()
+    qb.append(StructureData, filters={'id': {'in': structure_pks}}, tag='structure')
+    qb.append(
+        Node, 
+        with_incoming='structure',  # Find nodes that receive the StructureData as input
+        filters={'node_type': {'in': [
+            'process.calculation.calcjob.CalcJobNode.',
+            'process.workflow.workchain.WorkChainNode.',
+            'process.calculation.function.CalcFunctionNode.'
+        ]}},
+        project=['id']  # Retrieve PKs only
+    )
+    return [entry[0] for entry in qb.all()]
+
+def safe_to_delete(workchain_pk):
+    """
+    Determines if a WorkChainNode can be safely deleted.
+    
+    :param workchain_pk: The PK of the WorkChainNode.
+    :return: True if it can be safely removed, False otherwise.
+    """
+    structure_pks = get_structuredata_descendants(workchain_pk)
+    calcjobs = get_processes_with_structuredata_input(structure_pks)
+    
+    for job in calcjobs:
+        if first_caller(job) != workchain_pk:
+            return False
+    return True
+
+def get_old_unfinished_workchains(cutoffdays=30):
+    """
+    Returns a formatted message with all WorkChainNodes that are older than 30 days and unfinished.
+    
+    :return: HTML formatted message with green (✅) and red (❌) indicators.
+    """
+    if not load_profile():
+        load_profile("default")
+    cutoff_date = datetime.now() - timedelta(days=cutoffdays)
+    
+    qb = QueryBuilder()
+    qb.append(
+        WorkChainNode, 
+        filters={
+            'ctime': {'<': cutoff_date},  # Created more than 30 days ago
+            'attributes.process_state': {'!in': ['finished', 'excepted', 'killed']}  # Not finished
+        },
+        project=['id']  # Retrieve PKs only
+    )
+    
+    old_unfinished = [entry[0] for entry in qb.all()]
+    if not old_unfinished:
+        return False,"<style='color: green;'>✅ No old unfinished WorkChainNodes found.<br>"
+    
+    msg = "<style='color: darkorange;'>⚠️ Found old unfinished WorkChains<br>"
+    msg += "<p>Ask for help if you are unsure about removing them.</p><ul>"
+    
+    for pk in old_unfinished:
+        if safe_to_delete(pk):
+            msg += f"<li style='color: green;'>✅ WorkChain <strong>PK {pk}</strong> can be safely removed.</li>"
+        else:
+            msg += f"<li style='color: red;'>❌ WorkChain <strong>PK {pk}</strong> cannot be safely removed.</li>"
+    
+    msg += "</ul>"
+    return True,msg

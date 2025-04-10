@@ -8,9 +8,7 @@ from .string_utils import *
 from .repo_utils import *
 from .aiida_and_ssh_utils import *
 from datetime import datetime,timedelta
-from aiida import load_profile
-from aiida.orm import load_node
-from aiida.orm import QueryBuilder, WorkChainNode, StructureData, Node
+
 
 # Check repository of config files
 def check_repository():
@@ -40,12 +38,12 @@ def get_config(file_path='/home/jovyan/opt/aiidalab-alps-files/config.yml', conf
     # Verifica che tutti i widget siano selezionati
     for key in config_widgets:
         if config_widgets[key].value == "select":
-            return f"<b style='color:red;'>❌please select {key}</b>", {}
+            return False,f"<b style='color:red;'>❌please select {key}</b>", {}
 
     # Verifica lo stato del repository
     status_ok, msg = check_repository()
     if not status_ok:
-        return msg, {}
+        return status_ok,msg, {}
 
     # Carica lo YAML
     with open(file_path, 'r') as f:
@@ -93,7 +91,7 @@ def get_config(file_path='/home/jovyan/opt/aiidalab-alps-files/config.yml', conf
     # Applica tutte le sostituzioni allo YAML
     data = recursive_replace(data, all_replacements)
 
-    return '', data
+    return True,'', data
 
 
 
@@ -207,12 +205,12 @@ def process_aiida_configuration(config, config_path):
             code_pk = next((pk for codename, pk in active_codes if codename == code_label), None)
             if code_pk is not None:
                 if not compare_code_configuration(code_label,code_data):
-                    updates_needed.setdefault('codes', {})[code_label] = {'rename': code_pk,'install':True}
+                    updates_needed.setdefault('codes', {})[code_label] = {'rename': code_pk,'hide':True,'install':True}
                     msg = f"⚠️ Code {code_label} is already installed in AiiDA but is old. Will be renamed and reinstalled.<br>"
             else:
                 code_pk = next((pk for codename, pk in not_active_codes if codename == f"{code_label}@{computer}"), None)
                 if code_pk is not None:
-                    updates_needed.setdefault('codes', {})[code_label] = {'rename': code_pk,'install':True}
+                    updates_needed.setdefault('codes', {})[code_label] = {'rename': code_pk,'hide':False,'install':True}
                     msg = f"⚠️ Code {code_label} is already installed (not active) in AiiDA but is old. Will be renamed and reinstalled.<br>"
                 else:
                     updates_needed.setdefault('codes', {})[code_label] = {'rename': False,'install':True}
@@ -353,114 +351,3 @@ def manage_uenv_images(uenvs):
 
     print("✅ UENV management complete.")
     return True
-
-#### CHECK for old unfinished Workchains
-def first_caller(node_pk, max_calls=5000):
-    """
-    Traces back to the first caller (root node) of a given node.
-    
-    :param node_pk: The PK of the node.
-    :param max_calls: Maximum recursion depth to prevent infinite loops.
-    :return: PK of the first caller.
-    """
-    num_calls = 0
-    caller = node_pk
-    while num_calls < max_calls:
-        try:
-            caller = load_node(caller).caller.pk
-        except AttributeError:
-            break  # No more parents, stop tracing
-        num_calls += 1
-    return caller
-
-def get_structuredata_descendants(parent_pk):
-    """
-    Returns all StructureData nodes that are descendants of a given node.
-    
-    :param parent_pk: The PK of the parent node (e.g., WorkChain PK).
-    :return: A list of StructureData node PKs.
-    """
-    qb = QueryBuilder()
-    qb.append(Node, filters={'id': parent_pk}, tag='parent')
-    qb.append(
-        StructureData, 
-        with_ancestors='parent',  # Search for descendants
-        project=['id']  # Retrieve PKs only
-    )
-    return [entry[0] for entry in qb.all()]
-
-def get_processes_with_structuredata_input(structure_pks):
-    """
-    Returns all CalcJob, WorkChain, and CalcFunction nodes that have 
-    a given StructureData node as an input.
-    
-    :param structure_pks: List of StructureData PKs.
-    :return: A list of process node PKs.
-    """
-    if not structure_pks:
-        return []
-    
-    qb = QueryBuilder()
-    qb.append(StructureData, filters={'id': {'in': structure_pks}}, tag='structure')
-    qb.append(
-        Node, 
-        with_incoming='structure',  # Find nodes that receive the StructureData as input
-        filters={'node_type': {'in': [
-            'process.calculation.calcjob.CalcJobNode.',
-            'process.workflow.workchain.WorkChainNode.',
-            'process.calculation.function.CalcFunctionNode.'
-        ]}},
-        project=['id']  # Retrieve PKs only
-    )
-    return [entry[0] for entry in qb.all()]
-
-def safe_to_delete(workchain_pk):
-    """
-    Determines if a WorkChainNode can be safely deleted.
-    
-    :param workchain_pk: The PK of the WorkChainNode.
-    :return: True if it can be safely removed, False otherwise.
-    """
-    structure_pks = get_structuredata_descendants(workchain_pk)
-    calcjobs = get_processes_with_structuredata_input(structure_pks)
-    
-    for job in calcjobs:
-        if first_caller(job) != workchain_pk:
-            return False
-    return True
-
-def get_old_unfinished_workchains():
-    """
-    Returns a formatted message with all WorkChainNodes that are older than 30 days and unfinished.
-    
-    :return: HTML formatted message with green (✅) and red (❌) indicators.
-    """
-    if not load_profile():
-        load_profile("default")
-    cutoff_date = datetime.now() - timedelta(days=30)
-    
-    qb = QueryBuilder()
-    qb.append(
-        WorkChainNode, 
-        filters={
-            'ctime': {'<': cutoff_date},  # Created more than 30 days ago
-            'attributes.process_state': {'!in': ['finished', 'excepted', 'killed']}  # Not finished
-        },
-        project=['id']  # Retrieve PKs only
-    )
-    
-    old_unfinished = [entry[0] for entry in qb.all()]
-    if not old_unfinished:
-        return "<style='color: green;'>✅ No old unfinished WorkChainNodes found.<br>"
-    
-    msg = "<style='color: darkorange;'>⚠️ Found old unfinished WorkChains<br>"
-    msg += "<p>Ask for help if you are unsure about removing them.</p><ul>"
-    
-    for pk in old_unfinished:
-        if safe_to_delete(pk):
-            msg += f"<li style='color: green;'>✅ WorkChain <strong>PK {pk}</strong> can be safely removed.</li>"
-        else:
-            msg += f"<li style='color: red;'>❌ WorkChain <strong>PK {pk}</strong> cannot be safely removed.</li>"
-    
-    msg += "</ul>"
-    return msg
