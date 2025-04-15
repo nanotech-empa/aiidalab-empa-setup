@@ -109,9 +109,9 @@ class ConfigAiiDAlabApp(ipw.VBox):
         else:
             self.update_message.value = f"<b>{timestamp}</b>: {remove_green_check_lines(msg)}"   
         # check for zombie workcains  
-        somerunning,msg = get_old_unfinished_workchains()
+        someoldzombie,msg = get_old_unfinished_workchains()
         self.update_old_workchains.value = f"<b>Old WorkChains Check:</b> {msg}"
-        somerunning,msg = get_old_unfinished_workchains(cutoffdays=3)
+        somerunning,msg = get_old_unfinished_workchains(cutoffdays=3,reverse=True)
         if somerunning:
             self.running_workchains.value = f"<b>There are running workchains, you cannot update:</b> {msg}"
         else:
