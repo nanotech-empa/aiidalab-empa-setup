@@ -519,7 +519,7 @@ def safe_to_delete(workchain_pk):
             return False
     return True
 
-def get_old_unfinished_workchains(cutoffdays=30):
+def get_old_unfinished_workchains(cutoffdays=30,reverse=False):
     """
     Returns a formatted message with all WorkChainNodes that are older than 30 days and unfinished.
     
@@ -528,14 +528,19 @@ def get_old_unfinished_workchains(cutoffdays=30):
     if not load_profile():
         load_profile("default")
     cutoff_date = datetime.now() - timedelta(days=cutoffdays)
-    
+    filters = {
+            'ctime': {'<': cutoff_date},  # Created more than 30 days ago
+            'attributes.process_state': {'!in': ['finished', 'excepted', 'killed']}  # Not finished
+        }
+    if reverse:
+        filters = {
+            'ctime': {'>': cutoff_date},  # Created less than 30 days ago
+            'attributes.process_state': {'!in': ['finished', 'excepted','killed']}  # Running or waiting
+        }
     qb = QueryBuilder()
     qb.append(
         WorkChainNode, 
-        filters={
-            'ctime': {'<': cutoff_date},  # Created more than 30 days ago
-            'attributes.process_state': {'!in': ['finished', 'excepted', 'killed']}  # Not finished
-        },
+        filters=filters,
         project=['id']  # Retrieve PKs only
     )
     

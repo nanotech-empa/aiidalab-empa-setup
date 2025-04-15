@@ -50,6 +50,8 @@ def get_config(file_path='/home/jovyan/opt/aiidalab-alps-files/config.yml', conf
         data = yaml.safe_load(f)
 
     variables = data.get("variables", {})
+    if 'timestamp' in variables and variables['timestamp'] == 'now':
+        variables['timestamp'] = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
     widgets = data.get("widgets", {})
 
     # Funzione per sostituire {key} in una stringa
