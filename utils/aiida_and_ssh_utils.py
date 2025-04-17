@@ -97,9 +97,12 @@ def compare_code_configuration(code_label, repository_code_data):
         exported_setup = yaml.safe_load(file)
 
     for entry in repository_code_data:
+        
         #str1, str2 = remove_placeholders(normalize_text(str(repository_code_data[entry])), normalize_text(str(exported_setup.get(entry, ""))))
         str1 = normalize_text(str(repository_code_data[entry]))
         str2 = normalize_text(str(exported_setup.get(entry, "")))
+        if entry == 'computer':
+            str2 = str2.split('_', 1)[0]
         if str1 != str2:
             return False, f"⚠️ **Setup Differences:** {entry}<br>"
     

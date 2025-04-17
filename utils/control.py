@@ -207,9 +207,10 @@ def process_aiida_configuration(config, config_path):
         if computer_up_to_date:  # Computer is up-to-date, check renaming needs
             code_pk = next((pk for codename, pk in active_codes if codename == code_label), None)
             if code_pk is not None:
-                if not compare_code_configuration(code_label,code_data):
+                codes_equal,msg = compare_code_configuration(code_label,code_data)
+                if not codes_equal:
                     updates_needed.setdefault('codes', {})[code_label] = {'rename': code_pk,'hide':True,'install':True}
-                    msg = f"⚠️ Code {code_label} is already installed in AiiDA but is old. Will be renamed and reinstalled.<br>"
+                    msg += f"⚠️ Code {code_label} is already installed in AiiDA but is old. Will be renamed and reinstalled.<br>"
             else:
                 code_pk = next((pk for codename, pk in not_active_codes if codename == f"{code_label}@{computer}"), None)
                 if code_pk is not None:
@@ -288,7 +289,6 @@ def manage_uenv_images(uenvs):
     """
 
     # Step 1: Check if the uenv repo exists, if not, create it
-    print(uenvs)
     hosts = {uenv[0] for uenv in uenvs}
     for remotehost in hosts:
         print(f"🔍 Checking UENV repository status on {remotehost}")
