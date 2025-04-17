@@ -200,7 +200,8 @@ def process_aiida_configuration(config, config_path):
         computer_up_to_date = computer not in updates_needed.get('computers', {})
         code_label = f"{code_data['label']}@{computer}"
 
-        # Default: No update needed
+        # Default: No update needed but check for uenv
+    
         msg = f"✅ Code {code_label} is already installed in AiiDA.<br>"
         
         if computer_up_to_date:  # Computer is up-to-date, check renaming needs
@@ -220,7 +221,7 @@ def process_aiida_configuration(config, config_path):
         else: #I will install the computer thus the code does not have to be renamed
             updates_needed.setdefault('codes', {})[code_label] = {'rename': False,'install':True}
             msg = f"⬜ Code {code_label} will be installed after installation of {computer}. No need to rename.<br>"
-
+        updates_needed.setdefault('codes', {}).setdefault(code_label, {})['checkuenv'] = True
         result_msg += msg   
     # To do: Check if cusntom app installations are needed
         
@@ -250,9 +251,11 @@ def setup_codes(codes_to_setup,config):
         hide=codes_to_setup[full_code].get('hide',False)
         pktorelabel=codes_to_setup[full_code].get('rename',False)
         install=codes_to_setup[full_code].get('install',False)
+        checkuenv = codes_to_setup[full_code].get('checkuenv',False)
         code = full_code.split('@')[0].split('-')[0] # pw
         code_data={}
-        if install:
+        
+        if install or checkuenv:
             code_data = defined_codes[code]
             computer = code_data['computer']
             hostname = config['computers'][computer]['setup']['hostname']
@@ -261,7 +264,7 @@ def setup_codes(codes_to_setup,config):
             if match:
                 uenv_value = match.group(1)  # Extract matched value
                 print(f"⬜  Need uenv: {uenv_value} for '{full_code}'")
-                if uenv_value not in uenvs:
+                if (hostname,uenv_value) not in uenvs:
                     uenvs.append((hostname,uenv_value))
             else:
                 print(f"✅ No uenv needed for '{full_code}'")
@@ -285,6 +288,7 @@ def manage_uenv_images(uenvs):
     """
 
     # Step 1: Check if the uenv repo exists, if not, create it
+    print(uenvs)
     hosts = {uenv[0] for uenv in uenvs}
     for remotehost in hosts:
         print(f"🔍 Checking UENV repository status on {remotehost}")
@@ -310,7 +314,7 @@ def manage_uenv_images(uenvs):
         print(f"🔍 Fetching available UENV images on {remotehost} for the user ")
         command = ["ssh", remotehost, "uenv", "image", "ls"]
         command_out, command_ok = run_command(command)
-        print(extract_first_column(command_out))
+        #print(extract_first_column(command_out))
         if not command_ok:
             print(f"❌ Failed to fetch UENV images on {remotehost}. Exiting.")
             return False
@@ -321,13 +325,16 @@ def manage_uenv_images(uenvs):
         
         command = ["ssh", remotehost, "uenv", "image", "find"]
         command_out, command_ok = run_command(command)
+        #print(extract_first_column(command_out))
         if not command_ok:
             print("❌ Failed to fetch system-wide UENV images. Exiting.")
             return False
         available_images.setdefault(remotehost,{})['host'] = extract_first_column(command_out)
-        
+        # Get the list of all images available on service:: (if any)
+        print("🔍 Fetching available UENV images on service::")        
         command = ["ssh", remotehost, "uenv", "image", "find", "service::"]
         command_out,command_ok = run_command(command)
+        #print(extract_first_column(command_out))
         if not command_ok:
             print("❌ Failed to fetch service UENV images. Exiting.")
             return False    
@@ -343,7 +350,7 @@ def manage_uenv_images(uenvs):
             print(f"✅ Image '{env}' is available on the host {remotehost}. Pulling...")
             command = ["ssh", remotehost, "uenv", "image", "pull", env]
             command_out, command_ok = run_command(command)
-        elif uenv in available_images[remotehost]['service']:
+        elif env in available_images[remotehost]['service']:
             print(f"✅ Image '{env}' is available in the service repo on {remotehost}. Pulling from service::...")
             command = ["ssh", remotehost, "uenv", "image", "pull", f"service::{env}"]
             command_out, command_ok = run_command(command)
