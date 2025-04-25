@@ -6,7 +6,7 @@ import shutil
 import time
 import os
 import re
-from aiida.orm import QueryBuilder, WorkChainNode, StructureData, Node
+from aiida.orm import QueryBuilder, WorkChainNode, CalcJobNode, StructureData, Node
 from aiida import load_profile
 from aiida.orm import load_node
 
@@ -522,35 +522,48 @@ def safe_to_delete(workchain_pk):
             return False
     return True
 
-def get_old_unfinished_workchains(cutoffdays=30,reverse=False):
+def get_old_unfinished_workchains(cutoffdays=30,reverse=False,paused=False):
     """
     Returns a formatted message with all WorkChainNodes that are older than 30 days and unfinished.
     
     :return: HTML formatted message with green (✅) and red (❌) indicators.
     """
+    nodes = [WorkChainNode]
+    project = ['id']
     if not load_profile():
         load_profile("default")
     cutoff_date = datetime.now() - timedelta(days=cutoffdays)
     filters = {
-            'ctime': {'<': cutoff_date},  # Created more than 30 days ago
+            'ctime': {'<': cutoff_date},  # Created more than x days ago
             'attributes.process_state': {'!in': ['finished', 'excepted', 'killed']}  # Not finished
         }
     if reverse:
         filters = {
-            'ctime': {'>': cutoff_date},  # Created less than 30 days ago
+            'ctime': {'>': cutoff_date},  # Created less than x days ago
             'attributes.process_state': {'!in': ['finished', 'excepted','killed']}  # Running or waiting
+        }
+    if paused:     
+        nodes = [WorkChainNode, CalcJobNode]  
+        project = ['id','attributes.paused'] 
+        filters = {
+            'ctime': {'>': cutoff_date},  # Created less than x days ago
+            'attributes.process_state': {'!in': ['finished', 'excepted','killed']},# Running or waiting
+            'attributes.paused': True  # Paused
         }
     qb = QueryBuilder()
     qb.append(
-        WorkChainNode, 
+        nodes, 
         filters=filters,
-        project=['id']  # Retrieve PKs only
+        project=project  # Retrieve PKs only
     )
     
     old_unfinished = [entry[0] for entry in qb.all()]
     if not old_unfinished:
         return False,"<style='color: green;'>✅ No old unfinished WorkChainNodes found.<br>"
     
+    if paused:
+        msg = ' '.join(str(num) for num in old_unfinished)
+        return True,msg
     msg = "<style='color: darkorange;'>⚠️ Found old unfinished WorkChains<br>"
     msg += "<p>Ask for help if you are unsure about removing them.</p><ul>"
     
@@ -562,3 +575,12 @@ def get_old_unfinished_workchains(cutoffdays=30,reverse=False):
     
     msg += "</ul>"
     return True,msg
+def play_paused_workchains(paused_workchains):
+    """
+    Replays paused workchains.
+    
+    :param paused_workchains: string of paused workchain PKs.
+    """
+    if not paused_workchains:
+        return "No paused workchains to play.",True
+    return run_command(["verdi", "process", "play"]+ paused_workchains.split())
