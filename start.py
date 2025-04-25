@@ -15,6 +15,7 @@ class ConfigAiiDAlabApp(ipw.VBox):
         self.update_message = ipw.HTML("Nothing to report")
         self.update_old_workchains = ipw.HTML("")
         self.running_workchains = ipw.HTML("")
+        self.paused_workchains = ipw.HTML("")
         self.check = True # set to False while applying updates and then set to True again
 
         # Check for updates button
@@ -27,6 +28,10 @@ class ConfigAiiDAlabApp(ipw.VBox):
         # Clear button
         self.clear_button = ipw.Button(description="Clear logs", button_style="warning") 
         self.clear_button.on_click(self.clear_output)
+        
+        # Play paused workchains button
+        self.play_button = ipw.Button(description="Play paused workchains", button_style="success",disabled=True)
+        self.play_button.on_click(self.play_paused)
 
         # Output display
         self.subtitle = ipw.HTML("")
@@ -34,15 +39,18 @@ class ConfigAiiDAlabApp(ipw.VBox):
         
         # initialize widgets and variables
         self.config_widgets = self.widgets_from_yaml()
+        some_paused_calculations,self.paused_calculations = self.check_paused_workchains()
+        self.play_button.disabled = not some_paused_calculations
         
         # Call VBox constructor directly
         super().__init__([
             self.title,
             self.update_old_workchains,  # Display updates for old workchains
             self.running_workchains,  # Display running workchains
+            self.paused_workchains,  # Display paused workchains
             self.update_message,  # Display general updates
             ipw.HBox([widget for widget in self.config_widgets.values()]),
-            ipw.HBox([self.check_button,self.start_button, self.clear_button]),
+            ipw.HBox([self.check_button,self.start_button, self.play_button, self.clear_button]),
             self.subtitle,
             self.output
         ])
@@ -90,6 +98,24 @@ class ConfigAiiDAlabApp(ipw.VBox):
         # Create dropdown widgets form teh yamls file
         widgets = {key: ipw.Dropdown(description=key, options=options) for key, options in yaml_widgets.items()}
         return widgets        
+    
+    def check_paused_workchains(self):
+        """Check for paused workchains."""
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        some_paused,msg = get_old_unfinished_workchains(cutoffdays=4,reverse=True,paused=True)
+        if msg !='':
+            self.paused_workchains.value = f"<b>{timestamp}</b>: There are paused workchains: {msg}"
+        return some_paused,msg
+    
+    def play_paused(self,_):
+        self.play_button.disabled = True
+        print(f"AAAAAAA{self.paused_calculations}")
+        if self.paused_calculations != '':
+            output,success = play_paused_workchains(self.paused_calculations)
+        if success:
+            self.paused_workchains.value = f"<b>{output}</b>: Workchains are resumed"
+        else:
+            self.paused_workchains.value = f"<b>{output}</b>: Workchains are not resumed, please check"
 
     def check_for_all_updates(self,_):
         status_ok,msg,self.config = get_config(config_widgets=self.config_widgets)
@@ -122,6 +148,7 @@ class ConfigAiiDAlabApp(ipw.VBox):
         self.output.clear_output()
         self.update_message.value = f"<b>{timestamp}</b>: ✅ Nothing to report"
         self.subtitle.value = ""
+        self.paused_workchains.value = ""
         self.start_button.disabled = True
       
     def run_configuration(self,_):
