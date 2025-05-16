@@ -567,7 +567,12 @@ def get_old_unfinished_workchains(cutoffdays=30,reverse=False,paused=False):
     msg = "<style='color: darkorange;'>⚠️ Found old unfinished WorkChains<br>"
     msg += "<p>Ask for help if you are unsure about removing them.</p><ul>"
     
+    # workchains that should be deleted
+    main_old_unfinished = []
     for pk in old_unfinished:
+        if pk == first_caller(pk) and (pk not in main_old_unfinished):
+            main_old_unfinished.append(pk)
+    for pk in main_old_unfinished:
         if safe_to_delete(pk):
             msg += f"<li style='color: green;'>✅ WorkChain <strong>PK {pk}</strong> can be safely removed.</li>"
         else:
