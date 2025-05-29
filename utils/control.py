@@ -97,9 +97,9 @@ def get_config(file_path='/home/jovyan/opt/aiidalab-alps-files/config.yml', conf
 
 
 
-def check_for_updates(config):
+def check_for_updates(config,selected_grant):
     """Checks teh config file."""    
-    status,msg,updates_needed = process_aiida_configuration(config, config_path)
+    status,msg,updates_needed = process_aiida_configuration(config, config_path,selected_grant)
     if not status:
         return msg,{}
     if not updates_needed:
@@ -107,7 +107,7 @@ def check_for_updates(config):
     else:
         return msg,updates_needed
     
-def process_aiida_configuration(config, config_path):
+def process_aiida_configuration(config, config_path,selected_grant):
     """
     Reads the YAML configuration file, renames the existing SSH config, 
     creates a new SSH config from the YAML file, and checks installed vs. missing AiiDA computers.
@@ -143,37 +143,43 @@ def process_aiida_configuration(config, config_path):
         
     # Check if each defined computer exists in AiiDA and is up-to-date
     defined_computers = config.get("computers", {})
+    # Build valid combinations
+    valid_computer_grants =  [f"{name}_{grant}" for name, data in defined_computers.items() for grant in data['grants']]
+    selected_computer_grant = [f"{name}_{grant}" for name, data in defined_computers.items() for grant in data['grants'] if grant == selected_grant]
 
+    # Add special standalone entries
+    valid_computer_grants += ["localhost"]
     # Checking for old grants
+    
     defined_grants = config['widgets']['grant']
-    defined_grants += ['nogrant']
     defined_grants.remove('select')
     for computer in active_computers:
-        if computer != 'localhost':
-            its_grant = computer.split('_')[-1]
-            if its_grant == computer:
-                its_grant = 'notspecfied'
-            if its_grant not in defined_grants:
-                result_msg += f"⚠️ Computer '{computer}' is installed in AiiDA but its grant '{its_grant}' is not defined in the configuration file.<br>"
-                updates_needed.setdefault('computers', {})[computer] = {'hide':True,'rename': False,'install':False}
+        if computer not in valid_computer_grants:
+            result_msg += f"⚠️ Computer '{computer}' is installed in AiiDA but  is not foreseen in the configuration file.<br>"
+            updates_needed.setdefault('computers', {})[computer] = {'hide':True,'rename': False,'install':False}
 
     # Checking computers
     for comp, comp_data in defined_computers.items():
+        # full_comp = daint_lp83 since in the yml is daint_{grant}
         full_comp = comp_data['setup']['label']
         if full_comp in active_computers:
             result_msg += f"✅⬜ Computer '{full_comp}' is already installed in AiiDA, checking for its configuration.<br>"
             is_up_to_date, msg = compare_computer_configuration(full_comp, comp_data)
             result_msg += msg
             if not is_up_to_date:  # Only add to updates_needed if not up-to-date
-                updates_needed.setdefault('computers', {})[full_comp] = {'hide':True,'rename': True,'install':True}
+                install = full_comp in selected_computer_grant
+                updates_needed.setdefault('computers', {})[full_comp] = {'hide':True,'rename': True,'install':install}
 
         elif full_comp in not_active_computers:
             result_msg += f"⬜ Computer '{full_comp}' is listed but NOT active in AiiDA.<br>"
-            updates_needed.setdefault('computers', {})[full_comp] = {'hide':False,'rename': True,'install':True}
+            install = full_comp in selected_computer_grant
+            updates_needed.setdefault('computers', {})[full_comp] = {'hide':False,'rename': True,'install':install}
 
         else: #here distinguish between all grants and selected grant
-            result_msg += f"❌ Computer '{full_comp}' is completely missing from AiiDA.<br>"
-            updates_needed.setdefault('computers', {})[full_comp] = {'hide':False,'rename': False,'install':True}
+            install = full_comp in selected_computer_grant
+            if install:
+                result_msg += f"❌ Computer '{full_comp}' is completely missing from AiiDA.<br>"
+                updates_needed.setdefault('computers', {})[full_comp] = {'hide':False,'rename': False,'install':install}
 
     # Checking codes
     defined_codes = config.get("codes", {})
@@ -182,21 +188,17 @@ def process_aiida_configuration(config, config_path):
     # in the yaml configuration a code definition also include the computer
  
     # Hide unclassified codes
-    # Build valid combinations
-    valid_computer_grants = [
-        f"{comp}_{grant}" for comp, grant in product(defined_computers.keys(), defined_grants)
-    ]
 
-    # Add special standalone entries
-    valid_computer_grants += ["localhost","tigu"]
-    for codename, code_pk in active_codes:
-        if codename.split("@", 1)[1] not in valid_computer_grants:
+    # hide and rename codes of old computers
+    for codename, codecomputer, code_pk in active_codes:
+        if codecomputer not in valid_computer_grants:
             result_msg += f"⚠️ Code '{codename}' is installed in AiiDA but its computer/grant is not defined in the configuration file.<br>"
             updates_needed.setdefault('codes', {})[codename] = {'hide':code_pk,'rename':code_pk,'install':False}
     
-    # To do. loop on active codes with grant that is old, --> hide
+    
     for _, code_data in defined_codes.items(): 
         computer = defined_computers[code_data['computer']]['setup']['label']
+        install = computer in selected_computer_grant
         computer_up_to_date = computer not in updates_needed.get('computers', {})
         code_label = f"{code_data['label']}@{computer}"
 
@@ -204,23 +206,23 @@ def process_aiida_configuration(config, config_path):
     
         msg = f"✅ Code {code_label} is already installed in AiiDA.<br>"
         
-        if computer_up_to_date:  # Computer is up-to-date, check renaming needs
-            code_pk = next((pk for codename, pk in active_codes if codename == code_label), None)
-            if code_pk is not None:
+        if computer_up_to_date:  # Computer is up-to-date, check active and non active codes
+            code_pk = next((pk for codename,codecomputer, pk in active_codes if f"{codename}@{codecomputer}" == code_label), None)
+            if code_pk is not None: # the code is already present and active
                 codes_equal,msg = compare_code_configuration(code_label,code_data)
-                if not codes_equal:
-                    updates_needed.setdefault('codes', {})[code_label] = {'rename': code_pk,'hide':True,'install':True}
+                if not codes_equal: # but outdated
+                    updates_needed.setdefault('codes', {})[code_label] = {'rename': code_pk,'hide':True,'install':install}
                     msg += f"⚠️ Code {code_label} is already installed in AiiDA but is old. Will be renamed and reinstalled.<br>"
-            else:
-                code_pk = next((pk for codename, pk in not_active_codes if codename == f"{code_label}@{computer}"), None)
-                if code_pk is not None:
-                    updates_needed.setdefault('codes', {})[code_label] = {'rename': code_pk,'hide':False,'install':True}
+            else: # check within non_active_codes
+                code_pk = next((pk for codename, codecomputer, pk in not_active_codes if f"{codename}@{codecomputer}" == f"{code_label}@{computer}"), None)
+                if code_pk is not None: # the code is present but not active
+                    updates_needed.setdefault('codes', {})[code_label] = {'rename': code_pk,'hide':False,'install':install}
                     msg = f"⚠️ Code {code_label} is already installed (not active) in AiiDA but is old. Will be renamed and reinstalled.<br>"
-                else:
-                    updates_needed.setdefault('codes', {})[code_label] = {'rename': False,'install':True}
+                else: #the code is missing the computer is up-to-date
+                    updates_needed.setdefault('codes', {})[code_label] = {'rename': False,'install':install}
                     msg = f"⬜ Code {code_label} will be installed  {computer} is present.<br>"
         else: #I will install the computer thus the code does not have to be renamed
-            updates_needed.setdefault('codes', {})[code_label] = {'rename': False,'install':True}
+            updates_needed.setdefault('codes', {})[code_label] = {'rename': False,'install':install}
             msg = f"⬜ Code {code_label} will be installed after installation of {computer}. No need to rename.<br>"
         updates_needed.setdefault('codes', {}).setdefault(code_label, {})['checkuenv'] = True
         result_msg += msg   
