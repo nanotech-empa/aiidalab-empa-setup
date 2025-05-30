@@ -191,6 +191,7 @@ def process_aiida_configuration(config, config_path,selected_grant):
 
     # hide and rename codes of old computers
     for codename, codecomputer, code_pk in active_codes:
+        code_label = f"{codename}@{codecomputer}"
         if codecomputer not in valid_computer_grants:
             result_msg += f"⚠️ Code '{codename}' is installed in AiiDA but its computer/grant is not defined in the configuration file.<br>"
             updates_needed.setdefault('codes', {})[codename] = {'hide':code_pk,'rename':code_pk,'install':False}
@@ -199,32 +200,41 @@ def process_aiida_configuration(config, config_path,selected_grant):
     for _, code_data in defined_codes.items(): 
         computer = defined_computers[code_data['computer']]['setup']['label']
         install = computer in selected_computer_grant
-        computer_up_to_date = computer not in updates_needed.get('computers', {})
+        computer_will_be_outdated = computer in updates_needed.get('computers', {}) and not updates_needed['computers'][computer].get('install',False)
+        computer_will_be_installed = computer in updates_needed.get('computers', {}) and  updates_needed['computers'][computer].get('install',False)
+        computer_up_to_date = computer in active_computers and not computer_will_be_installed
         code_label = f"{code_data['label']}@{computer}"
+        code_pk_active = next((pk for codename,codecomputer, pk in active_codes if f"{codename}@{codecomputer}" == code_label), None)
+        code_pk_not_active = next((pk for codename,codecomputer, pk in not_active_codes if f"{codename}@{codecomputer}" == code_label), None)
 
         # Default: No update needed but check for uenv
     
         msg = f"✅ Code {code_label} is already installed in AiiDA.<br>"
         
-        if computer_up_to_date:  # Computer is up-to-date, check active and non active codes
-            code_pk = next((pk for codename,codecomputer, pk in active_codes if f"{codename}@{codecomputer}" == code_label), None)
-            if code_pk is not None: # the code is already present and active
-                codes_equal,msg = compare_code_configuration(code_label,code_data)
-                if not codes_equal: # but outdated
-                    updates_needed.setdefault('codes', {})[code_label] = {'rename': code_pk,'hide':True,'install':install}
-                    msg += f"⚠️ Code {code_label} is already installed in AiiDA but is old. Will be renamed and reinstalled.<br>"
-            else: # check within non_active_codes
-                code_pk = next((pk for codename, codecomputer, pk in not_active_codes if f"{codename}@{codecomputer}" == f"{code_label}@{computer}"), None)
-                if code_pk is not None: # the code is present but not active
-                    updates_needed.setdefault('codes', {})[code_label] = {'rename': code_pk,'hide':False,'install':install}
-                    msg = f"⚠️ Code {code_label} is already installed (not active) in AiiDA but is old. Will be renamed and reinstalled.<br>"
-                else: #the code is missing the computer is up-to-date
-                    updates_needed.setdefault('codes', {})[code_label] = {'rename': False,'install':install}
-                    msg = f"⬜ Code {code_label} will be installed  {computer} is present.<br>"
-        else: #I will install the computer thus the code does not have to be renamed
-            updates_needed.setdefault('codes', {})[code_label] = {'rename': False,'install':install}
-            msg = f"⬜ Code {code_label} will be installed after installation of {computer}. No need to rename.<br>"
-        updates_needed.setdefault('codes', {}).setdefault(code_label, {})['checkuenv'] = True
+        #check for all codes independently from the selected grant and install in case of matching grant
+        if computer_will_be_outdated: # Computer is not up-to-date, check active and non active codes
+            if code_pk_active is not None: # the code is already present and active
+                updates_needed.setdefault('codes', {})[code_label] = {'rename': code_pk_active,'hide':True,'install':False}
+                msg = f"⚠️ Code {code_label} is already installed  in AiiDA but on a old computer. Will be renamed and reinstalled.<br>"
+            elif code_pk_not_active is not None: 
+                updates_needed.setdefault('codes', {})[code_label] = {'rename': code_pk_not_active,'hide':False,'install':False}
+                msg = f"⚠️ Code {code_label} is already installed  in AiiDA,not active and on a old computer. Will be renamed and reinstalled.<br>"
+        elif computer_will_be_installed: # Computer is not present, and will be installed
+            if install:
+                updates_needed.setdefault('codes', {})[code_label] = {'rename': False,'install':True}
+                msg = f"⬜ Code {code_label} will be installed  {computer} will be installed.<br>"
+        elif computer_up_to_date: # Computer is present and up-to-date
+            if install:
+                if code_pk_active is not None: # the code is already present and active
+                    codes_equal,msg = compare_code_configuration(code_label,code_data)
+                    if not codes_equal: # but outdated
+                        updates_needed.setdefault('codes', {})[code_label] = {'rename': code_pk_active,'install':True}
+                        msg = f"⬜ Code {code_label} will be installed  {computer} is present.<br>"
+                elif code_pk_not_active is not None: # the code is already present but not active
+                    updates_needed.setdefault('codes', {})[code_label] = {'rename': code_pk_active,'install':True}
+                    msg = f"⬜ Code {code_label} will be installed  {computer} is present the old non active code will be renamed.<br>"
+                
+        
         result_msg += msg   
     # To do: Check if cusntom app installations are needed
         
