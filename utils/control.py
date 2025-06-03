@@ -194,7 +194,7 @@ def process_aiida_configuration(config, config_path,selected_grant):
         code_label = f"{codename}@{codecomputer}"
         if codecomputer not in valid_computer_grants:
             result_msg += f"⚠️ Code '{codename}' is installed in AiiDA but its computer/grant is not defined in the configuration file.<br>"
-            updates_needed.setdefault('codes', {})[codename] = {'hide':code_pk,'rename':code_pk,'install':False}
+            updates_needed.setdefault('codes', {})[code_label] = {'hide':code_pk,'rename':code_pk,'install':False}
     
     
     for _, code_data in defined_codes.items(): 
@@ -233,6 +233,9 @@ def process_aiida_configuration(config, config_path,selected_grant):
                 elif code_pk_not_active is not None: # the code is already present but not active
                     updates_needed.setdefault('codes', {})[code_label] = {'rename': code_pk_active,'install':True}
                     msg = f"⬜ Code {code_label} will be installed  {computer} is present the old non active code will be renamed.<br>"
+                else:
+                    updates_needed.setdefault('codes', {})[code_label] = {'rename': False,'install':True}
+                    msg = f"⬜ Code {code_label} will be installed  {computer} is present.<br>"
                 
         
         result_msg += msg   
