@@ -230,6 +230,9 @@ def process_aiida_configuration(config, config_path,selected_grant):
                     if not codes_equal: # but outdated
                         updates_needed.setdefault('codes', {})[code_label] = {'rename': code_pk_active,'install':True}
                         msg = f"⬜ Code {code_label} will be installed  {computer} is present.<br>"
+                    else:
+                        updates_needed.setdefault('codes', {})[code_label] = {'checkuenv': True,'install':False}
+                        msg = f"✅ Code {code_label} is already installed in AiiDA and up-to-date we will check if uenv is present.<br>"
                 elif code_pk_not_active is not None: # the code is already present but not active
                     updates_needed.setdefault('codes', {})[code_label] = {'rename': code_pk_active,'install':True}
                     msg = f"⬜ Code {code_label} will be installed  {computer} is present the old non active code will be renamed.<br>"
