@@ -128,7 +128,7 @@ class ConfigAiiDAlabApp(ipw.VBox):
             self.update_message.value = f"<b>{timestamp}</b>: ❌ SSH key is not valid, please update it"
             return
         if msg =='':
-            msg,self.updates_needed = check_for_updates(self.config)        
+            msg,self.updates_needed = check_for_updates(self.config,self.config_widgets['grant'].value)        
         msg = remove_green_check_lines(msg)
         if not msg:
             self.update_message.value = f"<b>{timestamp}</b>: ✅ Nothing to report" 

@@ -6,9 +6,11 @@ import shutil
 import time
 import os
 import re
-from aiida.orm import QueryBuilder, WorkChainNode, CalcJobNode, StructureData, Node
+from aiida.orm import QueryBuilder, WorkChainNode,Computer,Code, CalcJobNode, StructureData, Node
 from aiida import load_profile
-from aiida.orm import load_node
+from aiida.orm import load_node,load_computer
+from aiida.orm import User
+from aiida.manage.configuration import get_profile
 
 def run_command(command, max_retries=5,verbose=False):
     """
@@ -112,17 +114,15 @@ def aiida_computers():
     result_msg = ""
     active_computers = set()
     not_active_computers = set()
-
-    output, success = run_command(["verdi", "computer", "list", "-a"])
-    if not success:
-        return False, f"❌ Error running 'verdi computer list -a': {output}", active_computers, not_active_computers
-
-    for line in output.splitlines():
-        stripped_line = line.strip()
-        if stripped_line.startswith("* "):
-            active_computers.add(stripped_line[2:])
-        elif stripped_line and not stripped_line.startswith("Report:"):
-            not_active_computers.add(stripped_line)
+    user = User.collection.get(email=get_profile().default_user_email)
+    qb = QueryBuilder()
+    qb.append(Computer,project=["label","id"])
+    for comp in qb.all():
+        computer = load_computer(comp[1])
+        if computer.is_user_enabled(user=user):
+            active_computers.add(comp[0])
+        else:
+            not_active_computers.add(comp[0])
 
     result_msg += f"✅ Active AiiDA computers: {'<br>'.join([f'✅{comp}' for comp in active_computers])}"
     result_msg += "<br>"
@@ -133,28 +133,27 @@ def aiida_computers():
 
 def aiida_codes():
     result_msg = ""
-    all_codes = set()
-    codes = set()
+    active_codes = set()
+    not_active_codes = set()
 
-    output, success = run_command(["verdi", "code", "list", "-a"])
-    if not success:
-        return False, f"❌ Error running 'verdi code list -a': {output}<br>", set(), set()
-    all_codes = {(line.split()[0], line.split()[1]) for line in output.splitlines() if "@" in line}
-    
-    output, success = run_command(["verdi", "code", "list"])
-    if not success:
-        return False, f"❌ Error running 'verdi code list': {output}<br>", set(), set()
-    codes = {(line.split()[0], line.split()[1]) for line in output.splitlines() if "@" in line}
-
-    not_active_codes = all_codes - codes
-    active_section = ('<br>'.join([f"✅ {code[0]}  PK: {str(code[1])}" for code in (codes or [])]) if codes else "None")
+    qb = QueryBuilder()
+    qb.append(Code,project="id")
+    for code in qb.all():
+        the_code=load_node(code[0])
+        if the_code.is_hidden:
+            not_active_codes.add((the_code.label,the_code.computer.label,code[0]))
+        else:
+            active_codes.add((the_code.label,the_code.computer.label,code[0]))
+            
+    active_section = ('<br>'.join([f"✅ {code[0]}  PK: {str(code[1])}" for code in (active_codes or [])]) if active_codes else "None")
     not_active_section = ('<br>'.join([f"✅⬜{code[0]} PK: {str(code[1])}" for code in (not_active_codes or [])]) if not_active_codes else "None")
+
 
     result_msg += f"✅ Active AiiDA codes:<br> {active_section}"
     result_msg += "<br>"
     result_msg += f"✅⬜ Not active AiiDA codes:<br> {not_active_section}"
     result_msg += "<br>"
-    return True, result_msg, codes, not_active_codes
+    return True, result_msg, active_codes, not_active_codes
 
 
 def setup_aiida_computer(computer_name, config, hide=False, torelabel=False, install=False, grant=''):
