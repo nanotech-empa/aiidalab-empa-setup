@@ -197,7 +197,7 @@ def process_aiida_configuration(config, config_path,selected_grant):
             updates_needed.setdefault('codes', {})[code_label] = {'hide':code_pk,'rename':code_pk,'install':False}
     
     
-    for _, code_data in defined_codes.items(): 
+    for code_key, code_data in defined_codes.items(): 
         computer = defined_computers[code_data['computer']]['setup']['label']
         install = computer in selected_computer_grant
         computer_will_be_outdated = computer in updates_needed.get('computers', {}) and not updates_needed['computers'][computer].get('install',False)
@@ -214,30 +214,30 @@ def process_aiida_configuration(config, config_path,selected_grant):
         #check for all codes independently from the selected grant and install in case of matching grant
         if computer_will_be_outdated: # Computer is not up-to-date, check active and non active codes
             if code_pk_active is not None: # the code is already present and active
-                updates_needed.setdefault('codes', {})[code_label] = {'rename': code_pk_active,'hide':True,'install':False}
+                updates_needed.setdefault('codes', {})[code_label] = {'code_key': code_key,'rename': code_pk_active,'hide':True,'install':False}
                 msg = f"⚠️ Code {code_label} is already installed  in AiiDA but on a old computer. Will be renamed and reinstalled.<br>"
             elif code_pk_not_active is not None: 
-                updates_needed.setdefault('codes', {})[code_label] = {'rename': code_pk_not_active,'hide':False,'install':False}
+                updates_needed.setdefault('codes', {})[code_label] = {'code_key': code_key,'rename': code_pk_not_active,'hide':False,'install':False}
                 msg = f"⚠️ Code {code_label} is already installed  in AiiDA,not active and on a old computer. Will be renamed and reinstalled.<br>"
         elif computer_will_be_installed: # Computer is not present, and will be installed
             if install:
-                updates_needed.setdefault('codes', {})[code_label] = {'rename': False,'install':True}
+                updates_needed.setdefault('codes', {})[code_label] = {'code_key': code_key,'rename': False,'install':True}
                 msg = f"⬜ Code {code_label} will be installed  {computer} will be installed.<br>"
         elif computer_up_to_date: # Computer is present and up-to-date
             if install:
                 if code_pk_active is not None: # the code is already present and active
                     codes_equal,msg = compare_code_configuration(code_label,code_data)
                     if not codes_equal: # but outdated
-                        updates_needed.setdefault('codes', {})[code_label] = {'rename': code_pk_active,'install':True}
+                        updates_needed.setdefault('codes', {})[code_label] = {'code_key': code_key,'rename': code_pk_active,'install':True}
                         msg = f"⬜ Code {code_label} will be installed  {computer} is present.<br>"
                     else:
-                        updates_needed.setdefault('codes', {})[code_label] = {'checkuenv': True,'install':False}
+                        updates_needed.setdefault('codes', {})[code_label] = {'code_key': code_key,'checkuenv': True,'install':False}
                         msg = f"✅ Code {code_label} is already installed in AiiDA and up-to-date we will check if uenv is present.<br>"
                 elif code_pk_not_active is not None: # the code is already present but not active
-                    updates_needed.setdefault('codes', {})[code_label] = {'rename': code_pk_active,'install':True}
+                    updates_needed.setdefault('codes', {})[code_label] = {'code_key': code_key,'rename': code_pk_active,'install':True}
                     msg = f"⬜ Code {code_label} will be installed  {computer} is present the old non active code will be renamed.<br>"
                 else:
-                    updates_needed.setdefault('codes', {})[code_label] = {'rename': False,'install':True}
+                    updates_needed.setdefault('codes', {})[code_label] = {'code_key': code_key,'rename': False,'install':True}
                     msg = f"⬜ Code {code_label} will be installed  {computer} is present.<br>"
                 
         
@@ -271,7 +271,8 @@ def setup_codes(codes_to_setup,config):
         pktorelabel=codes_to_setup[full_code].get('rename',False)
         install=codes_to_setup[full_code].get('install',False)
         checkuenv = codes_to_setup[full_code].get('checkuenv',False)
-        code = full_code.split('@')[0].split('-')[0] # pw
+        #code = full_code.split('@')[0].split('-')[0] # pw
+        code = codes_to_setup[full_code].get('code_key')
         code_data={}
         
         if install or checkuenv:

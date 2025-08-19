@@ -261,7 +261,7 @@ def setup_aiida_code(code_name, code_config, hide=False, pktorelabel=False, inst
             "verdi", "code", "create", "core.code.installed",
             "--computer", computer, 
             "--filepath-executable", code_config["filepath_executable"],
-            "--label", relabeled,
+            "--label", code, #relabeled,
             "--description", code_config["description"],
             "--default-calc-job-plugin", code_config["default_calc_job_plugin"],
             "--prepend-text", code_config.get("prepend_text", " "),
