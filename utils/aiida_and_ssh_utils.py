@@ -171,7 +171,7 @@ def setup_aiida_computer(computer_name, config, hide=False, torelabel=False, ins
         if not success:
             print(f"❌ Error relabelling/deactivating '{computer_name}': {output}")
             return False
-    print(f"✅ Successfully relabeled/hidden computer '{computer_name}' to '{relabeled}'.")
+        print(f"✅ Successfully relabeled/hidden computer '{computer_name}' to '{relabeled}'.")
 
     if install:
         setup = config["setup"]
@@ -429,17 +429,23 @@ def parse_validity_time(public_key_file):
         capture_output=True,
     ).stdout
 
-    matched_line = (
-        re.search(r"^.*{}.*$".format("Valid:"), output, flags=re.MULTILINE)
-        .group(0)
-        .split()
-    )
-    start = datetime.fromisoformat(matched_line[2])
-    end = datetime.fromisoformat(matched_line[4])
+    try:
+        matched_line = (
+            re.search(r"^.*{}.*$".format("Valid:"), output, flags=re.MULTILINE)
+            .group(0)
+            .split()
+        )
+        start = datetime.fromisoformat(matched_line[2])
+        end = datetime.fromisoformat(matched_line[4])
+    except AttributeError:
+        start = None
+        end = None
     return start, end
 
 def key_is_valid(public_key_file = ''):
     """Check if the key is valid."""
+    if start is None or end is None:
+        return False
     start, end = parse_validity_time(public_key_file)
     if start < datetime.now() < end:
         return True
