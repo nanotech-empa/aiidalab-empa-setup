@@ -2,8 +2,8 @@ import asyncio
 import functools
 import ipywidgets as ipw
 from datetime import datetime
-from utils.control import * 
-from utils.aiida_and_ssh_utils import key_is_valid,get_old_unfinished_workchains
+from empa_setup_utils.control import * 
+from empa_setup_utils.aiida_and_ssh_utils import key_is_valid,get_old_unfinished_workchains
 __version__ = "v2025.0214"
 
 class ConfigAiiDAlabApp(ipw.VBox): 
