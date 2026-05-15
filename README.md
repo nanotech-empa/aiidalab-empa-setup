@@ -31,6 +31,10 @@ Every configuration change is identified automatically by the Git commit of
 `aiidalab-alps-files`; routine edits such as adding a user do not require a
 manual config version bump.
 
+The app defaults to the configured branch of `aiidalab-alps-files` (`main`), but
+developers can select another local or remote config branch from the app UI to
+test unreleased configuration changes.
+
 Most decision logic lives in `empa_setup_utils/control.py`; direct AiiDA,
 SSH, and shell command helpers live in `empa_setup_utils/aiida_and_ssh_utils.py`.
 

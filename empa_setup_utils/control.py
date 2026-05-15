@@ -16,12 +16,14 @@ from .aiida_and_ssh_utils import (
     setup_aiida_computer,
 )
 from .repo_utils import (
+    BRANCH,
     GIT_REPO_PATH,
     clone_repository,
     config_path,
     get_latest_remote_commit,
     get_local_commit,
     pull_latest_changes,
+    switch_config_branch,
 )
 from .string_utils import extract_first_column
 
@@ -29,7 +31,7 @@ SUPPORTED_SCHEMA_VERSION = 1
 
 
 # Check repository of config files
-def check_repository():
+def check_repository(branch=BRANCH):
     """Check if the repository exists and pull the latest changes."""
     msg = "<b style='color:green;'>✅ Repository is up to date.</b>"
     if not os.path.exists(GIT_REPO_PATH):
@@ -37,21 +39,34 @@ def check_repository():
             "<b style='color:orange;'>⚠️ Repository updated. "
             "Please inspect and then apply changes.</b>"
         )
-        if not clone_repository():
+        if not clone_repository(branch=branch):
             return (
                 False,
                 "<b style='color:red;'>❌ Failed to clone the repository. "
                 "Please check your configuration.</b>",
             )
 
-    local_commit = get_local_commit()
-    remote_commit = get_latest_remote_commit()
+    branch_ok, branch_msg = switch_config_branch(branch)
+    if not branch_ok:
+        return False, f"<b style='color:red;'>❌ {branch_msg}</b>"
 
-    if not local_commit or not remote_commit:
+    local_commit = get_local_commit()
+    remote_commit = get_latest_remote_commit(branch=branch)
+
+    if not local_commit:
         return False, "<b style='color:red;'>❌ Unable to check for updates.</b>"
 
+    if not remote_commit:
+        return (
+            True,
+            (
+                "<b style='color:orange;'>⚠️ Using local config branch "
+                f"'{branch}'. No matching remote branch was found.</b>"
+            ),
+        )
+
     if local_commit != remote_commit:
-        if not pull_latest_changes():
+        if not pull_latest_changes(branch=branch):
             return False, "<b style='color:red;'>❌ Failed to update the repository.</b>"
         msg = "<b style='color:orange;'>⚠️ Repository updated. Please apply changes.</b>"
 
@@ -61,6 +76,7 @@ def check_repository():
 def get_config(
     file_path='/home/jovyan/opt/aiidalab-alps-files/config.yml',
     config_widgets=None,
+    branch=BRANCH,
 ):
     """Get the configuration from the YAML file."""
     config_widgets = config_widgets or {}
@@ -69,7 +85,7 @@ def get_config(
         if widget.value == "select":
             return False, f"<b style='color:red;'>❌please select {key}</b>", {}
 
-    status_ok, msg = check_repository()
+    status_ok, msg = check_repository(branch=branch)
     if not status_ok:
         return status_ok, msg, {}
 
@@ -132,6 +148,7 @@ def get_config(
     data = recursive_replace(data, all_replacements)
     data["_metadata"] = {
         "schema_version": schema_version,
+        "config_branch": branch,
         "config_revision": (get_local_commit() or "unknown")[:12],
     }
 

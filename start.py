@@ -22,6 +22,7 @@ from empa_setup_utils.control import (
     setup_codes,
     setup_computers,
 )
+from empa_setup_utils.repo_utils import BRANCH, available_config_branches
 from empa_setup_utils.string_utils import remove_green_check_lines
 
 __version__ = "v2025.0214"
@@ -38,6 +39,14 @@ class ConfigAiiDAlabApp(ipw.VBox):
         self.check = True  # Disabled while applying updates.
         self.config = {}
         self.updates_needed = {}
+        self.config_branch_widget = ipw.Dropdown(
+            description="Config branch",
+            options=available_config_branches(),
+            value=BRANCH,
+            style={"description_width": "110px"},
+            layout=ipw.Layout(width="430px"),
+        )
+        self.config_branch_widget.observe(self.on_config_branch_change, names="value")
 
         self.check_button = ipw.Button(description="Inspect updates", button_style="info")
         self.check_button.on_click(self.check_for_all_updates)
@@ -58,7 +67,9 @@ class ConfigAiiDAlabApp(ipw.VBox):
         self.subtitle = ipw.HTML("")
         self.output = ipw.Output()
 
-        self.config_widgets = self.widgets_from_yaml()
+        self.config_widgets = self.widgets_from_yaml(
+            branch=self.config_branch_widget.value
+        )
         some_paused_calculations, self.paused_calculations = (
             self.check_paused_workchains()
         )
@@ -67,7 +78,7 @@ class ConfigAiiDAlabApp(ipw.VBox):
         controls = ipw.HBox(
             [self.check_button, self.start_button, self.play_button, self.clear_button]
         )
-        selectors = (
+        self.selectors = (
             ipw.HBox(list(self.config_widgets.values()))
             if self.config_widgets
             else ipw.HBox([])
@@ -80,7 +91,8 @@ class ConfigAiiDAlabApp(ipw.VBox):
                 self.running_workchains,
                 self.paused_workchains,
                 self.update_message,
-                selectors,
+                self.config_branch_widget,
+                self.selectors,
                 controls,
                 self.subtitle,
                 self.output,
@@ -96,7 +108,11 @@ class ConfigAiiDAlabApp(ipw.VBox):
         while True:
             if self.check:
                 status_ok, msg, self.config = await asyncio.to_thread(
-                    functools.partial(get_config, config_widgets=self.config_widgets)
+                    functools.partial(
+                        get_config,
+                        config_widgets=self.config_widgets,
+                        branch=self.config_branch_widget.value,
+                    )
                 )
                 if status_ok:
                     msg, self.updates_needed = await asyncio.to_thread(
@@ -123,13 +139,26 @@ class ConfigAiiDAlabApp(ipw.VBox):
                 )
             await asyncio.sleep(interval)
 
+    def on_config_branch_change(self, change):
+        """Reload YAML-driven selector widgets after switching config branch."""
+        if change["old"] == change["new"]:
+            return
+
+        self.start_button.disabled = True
+        self.config_widgets = self.widgets_from_yaml(branch=change["new"])
+        self.selectors.children = (
+            tuple(self.config_widgets.values()) if self.config_widgets else ()
+        )
+
     def widgets_from_yaml(
-        self, file_path="/home/jovyan/opt/aiidalab-alps-files/config.yml"
+        self,
+        file_path="/home/jovyan/opt/aiidalab-alps-files/config.yml",
+        branch=BRANCH,
     ):
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        status_ok, msg = check_repository()
+        status_ok, msg = check_repository(branch=branch)
         if not status_ok:
-            self.update_message.value = f"<b>{timestamp}</b>: ❌ Repository is not cloned"
+            self.update_message.value = f"<b>{timestamp}</b>: {msg}"
             return None
         self.update_message.value = f"<b>{timestamp}</b>: {msg}"
         with open(file_path, "r") as f:
@@ -159,10 +188,12 @@ class ConfigAiiDAlabApp(ipw.VBox):
             return ""
 
         schema_version = metadata.get("schema_version", "unknown")
+        config_branch = metadata.get("config_branch", "unknown")
         config_revision = metadata.get("config_revision", "unknown")
         return (
             "<small>"
             f"Config schema: {schema_version}; "
+            f"branch: {config_branch}; "
             f"config revision: {config_revision}"
             "</small><br>"
         )
@@ -181,7 +212,10 @@ class ConfigAiiDAlabApp(ipw.VBox):
             )
 
     def check_for_all_updates(self, _):
-        status_ok, msg, self.config = get_config(config_widgets=self.config_widgets)
+        status_ok, msg, self.config = get_config(
+            config_widgets=self.config_widgets,
+            branch=self.config_branch_widget.value,
+        )
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         if not status_ok:
             self.update_message.value = f"<b>{timestamp}</b>: {msg}"
