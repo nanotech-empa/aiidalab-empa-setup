@@ -11,7 +11,7 @@ configuration_file = config_files / "config.yml"
 GIT_REPO_PATH = config_files
 GIT_URL = "https://github.com/nanotech-empa/aiidalab-alps-files.git"  # files needed on daint
 GIT_REMOTE = "origin"
-BRANCH = "main"
+BRANCH = "integration/surfaces-v2.0.0a0"
 
 
 def _run_git(args, cwd=GIT_REPO_PATH, check=True):
