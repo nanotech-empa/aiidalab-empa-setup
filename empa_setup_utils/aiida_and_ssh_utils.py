@@ -1,18 +1,30 @@
-from .string_utils import   normalize_text, relabel,to_camel_case #remove_placeholders
-from datetime import datetime,timedelta
-import subprocess
-import yaml
-import shutil
-import time
 import os
 import re
 import shlex
+import shutil
+import subprocess
 import tempfile
-from aiida.orm import QueryBuilder, WorkChainNode,Computer,Code, CalcJobNode, StructureData, Node
+import time
+from datetime import datetime, timedelta
+
+import yaml
 from aiida import load_profile
-from aiida.orm import load_node,load_computer
-from aiida.orm import User
 from aiida.manage.configuration import get_profile
+from aiida.orm import (
+    CalcJobNode,
+    Code,
+    Computer,
+    Node,
+    QueryBuilder,
+    StructureData,
+    User,
+    WorkChainNode,
+    load_computer,
+    load_node,
+)
+
+from .string_utils import normalize_text, relabel, to_camel_case  #remove_placeholders
+
 
 def run_command(command, max_retries=5, verbose=False):
     """

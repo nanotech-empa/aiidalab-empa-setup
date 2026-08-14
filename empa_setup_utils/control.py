@@ -530,7 +530,7 @@ def manage_uenv_images(uenvs):
             or not repo_status
             or "no repository" in repo_status.lower()
         ):
-            print(f"⚠️ UENV repo not found. Creating repository...")
+            print("⚠️ UENV repo not found. Creating repository...")
             command = ["ssh", remotehost, "uenv", "repo", "create"]
             command_out, command_ok = run_command(command)
             if not command_ok:
