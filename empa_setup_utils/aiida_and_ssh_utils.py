@@ -282,7 +282,8 @@ def setup_aiida_code(code_name, code_config, hide=False, pktorelabel=False, inst
             "--description", code_config["description"],
             "--default-calc-job-plugin", code_config["default_calc_job_plugin"],
             "--prepend-text", code_config.get("prepend_text", " "),
-            "--append-text", code_config.get("append_text", " ")
+            "--append-text", code_config.get("append_text", " "),
+            "--non-interactive",
         ] + (["--use-double-quotes"] if code_config.get("use_double_quotes", False) else ["--no-use-double-quotes"])
         
         output, success = run_command(code_command)
