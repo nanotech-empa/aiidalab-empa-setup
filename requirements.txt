@@ -1,2 +1,4 @@
+aiidalab>=21.09.0
+humanize
 ipywidgets
 pyyaml
