@@ -4,6 +4,12 @@ Application to configure computers and codes for Empa nanotech@surfaces lab
 
 ## Installation
 
+The modern EMPA application line requires Python >=3.12 and AiiDAlab >=26.9.0.
+AiiDA >=2.8,<3 is the explicitly approved migration window; newer application
+work targets AiiDA 2.9.2. These are support-policy choices, not claims that
+older versions fail. The setup commands create codes non-interactively so that
+unattended registration does not stop at CLI prompts.
+
 This Jupyter-based app is intended to be run with [AiiDAlab](https://www.materialscloud.org/aiidalab).
 
 Assuming that the app was registered, you can install it directly via the app store in AiiDAlab or on the command line with:
