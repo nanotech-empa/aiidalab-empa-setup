@@ -1,0 +1,11 @@
+# Software authorship source: setup.cfg [metadata].author
+cff-version: 1.2.0
+type: software
+title: aiidalab-empa-setup
+message: If you use this software, please cite it and identify the exact version or commit
+  used. See README.md for software attribution and applicable scientific references.
+authors:
+- name: The AiiDAlab Team
+repository-code: https://github.com/nanotech-empa/aiidalab-empa-setup
+url: https://github.com/nanotech-empa/aiidalab-empa-setup
+license: MIT
