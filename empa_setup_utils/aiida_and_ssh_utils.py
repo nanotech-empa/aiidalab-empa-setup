@@ -6,13 +6,15 @@ import shutil
 import time
 import os
 import re
+import shlex
+import tempfile
 from aiida.orm import QueryBuilder, WorkChainNode,Computer,Code, CalcJobNode, StructureData, Node
 from aiida import load_profile
 from aiida.orm import load_node,load_computer
 from aiida.orm import User
 from aiida.manage.configuration import get_profile
 
-def run_command(command, max_retries=5,verbose=False):
+def run_command(command, max_retries=5, verbose=False):
     """
     Run a shell command locally or over SSH, capturing output and handling errors.
     Retries on 'Connection closed by remote host' errors.
@@ -53,21 +55,23 @@ def compare_computer_configuration(computer_name, repository_computer_data):
     if not repository_setup or not repository_config:
         return False, f"❌ Computer '{computer_name}' not found in config.yml!<br>"
 
-    setup_export_file, config_export_file = "setup.yml", "config.yml"
-    commands = [
-        ["verdi", "computer", "export", "setup", computer_name, setup_export_file],
-        ["verdi", "computer", "export", "config", computer_name, config_export_file]
-    ]
-    
-    for cmd in commands:
-        output, success = run_command(cmd)
-        if not success:
-            return False, f"❌ Error exporting AiiDA computer setup/config: {output}<br>"
+    with tempfile.TemporaryDirectory() as tmpdir:
+        setup_export_file = os.path.join(tmpdir, "setup.yml")
+        config_export_file = os.path.join(tmpdir, "config.yml")
+        commands = [
+            ["verdi", "computer", "export", "setup", computer_name, setup_export_file],
+            ["verdi", "computer", "export", "config", computer_name, config_export_file],
+        ]
 
-    with open(setup_export_file, "r") as file:
-        exported_setup = yaml.safe_load(file)
-    with open(config_export_file, "r") as file:
-        exported_config = yaml.safe_load(file)
+        for cmd in commands:
+            output, success = run_command(cmd)
+            if not success:
+                return False, f"❌ Error exporting AiiDA computer setup/config: {output}<br>"
+
+        with open(setup_export_file, "r") as file:
+            exported_setup = yaml.safe_load(file)
+        with open(config_export_file, "r") as file:
+            exported_config = yaml.safe_load(file)
 
     for entry in repository_setup:
         #str1, str2 = remove_placeholders(normalize_text(str(repository_setup[entry])), normalize_text(str(exported_setup.get(entry, ""))))
@@ -89,14 +93,15 @@ def compare_code_configuration(code_label, repository_code_data):
     """
     Compares the setup of an AiiDA code against stored values.
     """
-    export_file = "export.yml"
-    
-    output, success = run_command(["verdi", "code", "export", code_label, export_file])
-    if not success:
-        return False, f"❌ Error exporting AiiDA code setup: {output}<br>"
+    with tempfile.TemporaryDirectory() as tmpdir:
+        export_file = os.path.join(tmpdir, "export.yml")
 
-    with open(export_file, "r") as file:
-        exported_setup = yaml.safe_load(file)
+        output, success = run_command(["verdi", "code", "export", code_label, export_file])
+        if not success:
+            return False, f"❌ Error exporting AiiDA code setup: {output}<br>"
+
+        with open(export_file, "r") as file:
+            exported_setup = yaml.safe_load(file)
 
     for entry in repository_code_data:
         
@@ -323,7 +328,7 @@ def update_ssh_config(config_path,ssh_config_data,rename=True):
     config_file = config_path / "config"
     old_config_file = config_path / relabel("config") 
           
-    if rename:
+    if rename and config_file.exists():
         shutil.move(config_file, old_config_file)
         print(f"✅ Renamed {config_file} → {old_config_file}")
         
@@ -371,11 +376,13 @@ def set_ssh(config, hosts):
             ssh_keyscan_command = ["ssh-keyscan", "-H", remotehost]
             add_to_known_hosts(ssh_keyscan_command)
 
-    # Check if SSH works by listing the remote directory
-    ssh_check_command = ["ssh", remotehost, "ls"]
-    command_out, command_ok = run_command(ssh_check_command)
+        ssh_check_command = ["ssh", remotehost, "ls"]
+        command_out, command_ok = run_command(ssh_check_command)
+        if not command_ok:
+            print(f"❌ SSH check failed for {remotehost}: {command_out}")
+            return False
 
-    return command_ok
+    return True
 
 
 def add_to_known_hosts(ssh_keyscan_command):
@@ -389,6 +396,7 @@ def add_to_known_hosts(ssh_keyscan_command):
         bool: True if the command succeeds, False otherwise.
     """
     try:
+        os.makedirs(os.path.expanduser("~/.ssh"), exist_ok=True)
         with open(os.path.expanduser("~/.ssh/known_hosts"), "a") as f:
             known_host, success = run_command(ssh_keyscan_command)
             if success:
@@ -402,22 +410,42 @@ def add_to_known_hosts(ssh_keyscan_command):
     return False  # Failure
 
 def execute_custom_commands(yaml_commands):
-    """Execute all commands from custom_commands in the YAML file."""    
+    """Execute optional local and remote commands from the YAML file."""
     if "custom_commands" not in yaml_commands:
-        print("❌ No custom commands found in YAML file. Exiting.")
-        return False
-    
-    # Execute remote computer commands
-    remote_commands = yaml_commands["custom_commands"].get("remote_commands", {})
-    remotehost = remote_commands.pop('remotehost') # remove the remotehost from the dictionary after assigning it
+        print("✅ No custom commands defined.")
+        return True
+
+    custom_commands = yaml_commands["custom_commands"]
+    for setup_name, commands in custom_commands.get("local_commands", {}).items():
+        print(f"🔄 Executing local commands for {setup_name}...")
+        for entry in commands:
+            formatted_command = entry["command"]
+            if not formatted_command.strip():
+                continue
+            output, success = run_command(shlex.split(formatted_command))
+            if not success:
+                print(f"❌ Failed to execute: {formatted_command}. Exiting, ask for help.")
+                return False
+
+    remote_commands = custom_commands.get("remote_commands", {})
+    remotehost = remote_commands.get('remotehost')
     for setup_name, commands in remote_commands.items():
+        if setup_name == "remotehost":
+            continue
         print(f"🔄 Executing remote commands for {setup_name} on {remotehost}...")
         for entry in commands:
             formatted_command = entry["command"]
-            remote_command = ["ssh", remotehost, formatted_command] if entry["type"] == "ssh" else formatted_command.split()
-            output, success = run_command(remote_command)
+            if not formatted_command.strip():
+                continue
+            if entry["type"] == "ssh":
+                command = ["ssh", remotehost, formatted_command]
+            else:
+                command = shlex.split(formatted_command)
+            output, success = run_command(command)
             if not success:
-                print(f"❌ Failed to execute: {entry['type']} {formatted_command}. Exiting, ask for help.")
+                print(
+                    f"❌ Failed to execute: {entry['type']} {formatted_command}. Exiting, ask for help."
+                )
                 return False
     return True
     
@@ -440,7 +468,12 @@ def parse_validity_time(public_key_file):
 
 def key_is_valid(public_key_file = ''):
     """Check if the key is valid."""
-    start, end = parse_validity_time(public_key_file)
+    if not public_key_file or not os.path.exists(public_key_file):
+        return False
+    try:
+        start, end = parse_validity_time(public_key_file)
+    except (AttributeError, IndexError, ValueError):
+        return False
     if start < datetime.now() < end:
         return True
     else:
