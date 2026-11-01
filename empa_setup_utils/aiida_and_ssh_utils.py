@@ -367,15 +367,18 @@ def set_ssh(config, hosts):
         if proxy:
             print(f"🔄 Adding {proxy} to known_hosts...")
             ssh_keyscan_command = ["ssh-keyscan", "-H", proxy]
-            add_to_known_hosts(ssh_keyscan_command)
+            if not add_to_known_hosts(ssh_keyscan_command):
+                return False
 
             print(f"🔄 Adding {remotehost} via {proxy} to known_hosts...")
-            ssh_keyscan_command = ["ssh", proxy, "ssh-keyscan", "-H", remotehost]
-            add_to_known_hosts(ssh_keyscan_command)
+            ssh_keyscan_command = ["ssh", proxy, "ssh-keyscan", remotehost]
+            if not add_to_known_hosts(ssh_keyscan_command, hostname=remotehost):
+                return False
         else:
             print(f"🔄 Adding {remotehost} to known_hosts...")
             ssh_keyscan_command = ["ssh-keyscan", "-H", remotehost]
-            add_to_known_hosts(ssh_keyscan_command)
+            if not add_to_known_hosts(ssh_keyscan_command):
+                return False
 
         ssh_check_command = ["ssh", remotehost, "ls"]
         command_out, command_ok = run_command(ssh_check_command)
@@ -386,23 +389,41 @@ def set_ssh(config, hosts):
     return True
 
 
-def add_to_known_hosts(ssh_keyscan_command):
+def add_to_known_hosts(ssh_keyscan_command, hostname=None):
     """
     Runs ssh-keyscan and appends the output to ~/.ssh/known_hosts.
 
     Args:
         ssh_keyscan_command (list): The command to run (split properly).
+        hostname (str, optional): Host name OpenSSH will use for host-key
+            lookup. This is needed when a scan performed through a proxy
+            returns an internal IP address instead of the configured host name.
 
     Returns:
-        bool: True if the command succeeds, False otherwise.
+        bool: True if the command succeeds and returns host keys, False otherwise.
     """
     try:
         os.makedirs(os.path.expanduser("~/.ssh"), exist_ok=True)
         with open(os.path.expanduser("~/.ssh/known_hosts"), "a") as f:
             known_host, success = run_command(ssh_keyscan_command)
-            if success:
-                f.write(known_host + "\n")
-        return True  # Success
+            if not success or not known_host:
+                print("❌ ssh-keyscan did not return a host key")
+                return False
+
+            if hostname:
+                entries = []
+                for line in known_host.splitlines():
+                    fields = line.split()
+                    if line.startswith("#") or len(fields) < 3:
+                        continue
+                    entries.append(" ".join([hostname, *fields[1:]]))
+                known_host = "\n".join(entries)
+                if not known_host:
+                    print(f"❌ No usable host key returned for {hostname}")
+                    return False
+
+            f.write(known_host + "\n")
+        return True
 
     except subprocess.CalledProcessError as e:
         error_msg = e.stderr.strip() if e.stderr else "Unknown error (no stderr output)"
