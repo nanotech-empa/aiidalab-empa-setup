@@ -139,12 +139,18 @@ class ConfigAiiDAlabApp(ipw.VBox):
                 )
             await asyncio.sleep(interval)
 
+    def invalidate_plan(self, _=None):
+        """Require a fresh inspection after any setup selector changes."""
+        self.start_button.disabled = True
+        self.updates_needed = {}
+
     def on_config_branch_change(self, change):
         """Reload YAML-driven selector widgets after switching config branch."""
         if change["old"] == change["new"]:
             return
 
-        self.start_button.disabled = True
+        self.invalidate_plan()
+        self.config = {}
         self.config_widgets = self.widgets_from_yaml(branch=change["new"])
         self.selectors.children = (
             tuple(self.config_widgets.values()) if self.config_widgets else ()
@@ -165,10 +171,13 @@ class ConfigAiiDAlabApp(ipw.VBox):
             data = yaml.safe_load(f)
 
         yaml_widgets = data.get("widgets", {})
-        return {
+        widgets = {
             key: ipw.Dropdown(description=key, options=options)
             for key, options in yaml_widgets.items()
         }
+        for widget in widgets.values():
+            widget.observe(self.invalidate_plan, names="value")
+        return widgets
 
     def check_paused_workchains(self):
         """Check for paused workchains."""
@@ -212,6 +221,7 @@ class ConfigAiiDAlabApp(ipw.VBox):
             )
 
     def check_for_all_updates(self, _):
+        self.invalidate_plan()
         status_ok, msg, self.config = get_config(
             config_widgets=self.config_widgets,
             branch=self.config_branch_widget.value,
@@ -264,6 +274,14 @@ class ConfigAiiDAlabApp(ipw.VBox):
 
     def run_configuration(self, _):
         self.check = False
+        self.start_button.disabled = True
+        try:
+            self._apply_configuration()
+        finally:
+            self.check = True
+            self.updates_needed = {}
+
+    def _apply_configuration(self):
         self.output.clear_output()
 
         self.subtitle.value = "<h3>Setup SSH config file. Check SSH connection.</h3>"

@@ -14,11 +14,11 @@ GIT_REMOTE = "origin"
 BRANCH = "main"
 
 
-def _run_git(args, cwd=GIT_REPO_PATH, check=True):
+def _run_git(args, cwd=None, check=True):
     """Run a git command and return the completed process."""
     return subprocess.run(
         ["git", *args],
-        cwd=cwd,
+        cwd=GIT_REPO_PATH if cwd is None else cwd,
         capture_output=True,
         text=True,
         check=check,
@@ -134,6 +134,10 @@ def switch_config_branch(branch=BRANCH):
             _run_git(["switch", branch], cwd=GIT_REPO_PATH)
             return True, ""
         if branch in get_remote_branches():
+            _run_git(
+                ["fetch", GIT_REMOTE, f"refs/heads/{branch}:refs/remotes/{GIT_REMOTE}/{branch}"],
+                cwd=GIT_REPO_PATH,
+            )
             _run_git(["switch", "-c", branch, "--track", f"{GIT_REMOTE}/{branch}"])
             return True, ""
     except subprocess.CalledProcessError as error:
@@ -145,7 +149,7 @@ def switch_config_branch(branch=BRANCH):
 def pull_latest_changes(branch=BRANCH):
     """Pull the latest changes from the remote repository."""
     try:
-        _run_git(["pull", GIT_REMOTE, branch], cwd=GIT_REPO_PATH)
+        _run_git(["pull", "--ff-only", GIT_REMOTE, branch], cwd=GIT_REPO_PATH)
         return True
     except subprocess.CalledProcessError:
         return False
