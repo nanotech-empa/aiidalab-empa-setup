@@ -1,0 +1,26 @@
+name: Runtime compatibility
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  registration:
+    runs-on: ubuntu-latest
+    env:
+      AIIDA_PATH: /tmp/empa-setup-ci
+    strategy:
+      fail-fast: false
+      matrix:
+        aiida: ['aiida-core==2.8.0', 'aiida-core>=2.8,<3']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install the approved runtime boundary
+        run: python -m pip install -e . 'aiidalab==26.9.0' '${{ matrix.aiida }}' pytest
+      - name: Register codes without interactive input
+        env:
+          AIIDA_PATH: ${{ runner.temp }}/setup-aiida
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
+        run: python -m pytest -q tests
