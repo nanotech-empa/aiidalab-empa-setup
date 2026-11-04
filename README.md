@@ -46,6 +46,32 @@ test unreleased configuration changes.
 Most decision logic lives in `empa_setup_utils/control.py`; direct AiiDA,
 SSH, and shell command helpers live in `empa_setup_utils/aiida_and_ssh_utils.py`.
 
+## Selective setup and deployment profiles
+
+Choose **CSCS Kubernetes** for remote compute codes, or **Personal Docker** for
+optional codes inside the Linux container on a personal computer. The detected
+container architecture is displayed; ARM64 native runtimes are offered only on
+ARM64. `mac-localhost` is the catalog key for AiiDA's `localhost` Computer.
+PythTB remains an app Python dependency and needs no executable Code.
+
+Select computers, their individual accounts, and any subset of codes before
+inspection. Unselected resources are kept. Codes/computers absent from the YAML
+appear in a keep/deactivate list with **Keep** as the default. Updating an existing
+Computer definition is also opt-in; replacement is blocked when it would affect
+kept codes. No scientific nodes are deleted.
+
+Schema 2 adds configuration includes and `setup_tasks` scoped to computers/codes.
+Partial setup refuses ambiguous legacy command bundles. Apply checks selected
+SSH/uenv/runtime dependencies before registering codes, retains unrelated SSH
+configuration, and reports failed mounts even for already listed uenv images.
+Remote permissions and uenv repository locations are never repaired automatically.
+
+See the [personal Docker recreation runbook](docs/recreate-personal-docker.md),
+[clean-instance acceptance plan](docs/clean-instance-acceptance.md), and the
+companion [runtime catalog and prerequisites](https://github.com/nanotech-empa/aiidalab-alps-files/blob/feature/setup-readiness-checks/docs/runtime-installation.md).
+Quantum-worker updates/new deployments are deferred; preserve their existing
+versioned Codes and runtime prefixes.
+
 ## License
 
 MIT

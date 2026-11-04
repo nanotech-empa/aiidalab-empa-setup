@@ -1,37 +1,65 @@
-from .string_utils import   normalize_text, relabel,to_camel_case #remove_placeholders
-from datetime import datetime,timedelta
-import subprocess
-import yaml
-import shutil
-import time
 import os
 import re
 import shlex
+import shutil
+import subprocess
 import tempfile
-from aiida.orm import QueryBuilder, WorkChainNode,Computer,Code, CalcJobNode, StructureData, Node
+import time
+from datetime import datetime, timedelta
+from pathlib import Path
+
+import yaml
 from aiida import load_profile
-from aiida.orm import load_node,load_computer
-from aiida.orm import User
 from aiida.manage.configuration import get_profile
+from aiida.orm import (
+    CalcJobNode,
+    Code,
+    Computer,
+    Node,
+    QueryBuilder,
+    StructureData,
+    User,
+    WorkChainNode,
+    load_computer,
+    load_node,
+)
+
+from .string_utils import normalize_text, relabel, to_camel_case  #remove_placeholders
+
 
 def run_command(command, max_retries=5, verbose=False):
     """
     Run a shell command locally or over SSH, capturing output and handling errors.
     Retries on 'Connection closed by remote host' errors.
     """
-    retries = max_retries if any(cmd in command for cmd in ["ssh", "scp", "ssh-keyscan"]) else 1
+    command = list(command)
+    if command and command[0] in {"ssh", "scp"}:
+        command[1:1] = [
+            "-oBatchMode=yes", "-oStrictHostKeyChecking=yes",
+            "-oConnectTimeout=20", "-oServerAliveInterval=15",
+            "-oServerAliveCountMax=2",
+        ]
+    elif command and command[0] == "ssh-keyscan":
+        command[1:1] = ["-T", "20"]
+    network = command and command[0] in {"ssh", "scp", "ssh-keyscan"}
+    retries = max_retries if network else 1
     attempts = 0
 
     while attempts < retries:
         output, success = "", False
         try:
-            result = subprocess.run(command, check=True, capture_output=True, text=True)
-            output, success = result.stdout.strip(), True
+            result = subprocess.run(
+                command, check=True, capture_output=True, text=True,
+                stdin=subprocess.DEVNULL, timeout=3600 if network else 600,
+            )
+            output, success = "\n".join(part.strip() for part in (result.stdout, result.stderr) if part.strip()), True
             if verbose:
                 print(f"✅ Command executed successfully: {command}")
             return output, success
+        except (OSError, subprocess.TimeoutExpired) as error:
+            return str(error), False
         except subprocess.CalledProcessError as e:
-            error_msg = e.stderr.strip()
+            error_msg = "\n".join(part.strip() for part in (e.stdout, e.stderr) if part and part.strip())
             if verbose:
                 print(f"❌ Error executing command: {error_msg}")
             
@@ -52,7 +80,7 @@ def compare_computer_configuration(computer_name, repository_computer_data):
     repository_setup = repository_computer_data.get("setup", {})
     repository_config = repository_computer_data.get("config", {})
     
-    if not repository_setup or not repository_config:
+    if not repository_setup:
         return False, f"❌ Computer '{computer_name}' not found in config.yml!<br>"
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -104,15 +132,21 @@ def compare_code_configuration(code_label, repository_code_data):
             exported_setup = yaml.safe_load(file)
 
     for entry in repository_code_data:
+        if entry in {"runtime_checks", "manifest", "architectures", "deployments", "install_help"}:
+            continue
         
         #str1, str2 = remove_placeholders(normalize_text(str(repository_code_data[entry])), normalize_text(str(exported_setup.get(entry, ""))))
         str1 = normalize_text(str(repository_code_data[entry]))
         str2 = normalize_text(str(exported_setup.get(entry, "")))
-        if entry == 'computer':
-            str2 = str2.split('_', 1)[0]
         if str1 != str2:
             return False, f"⚠️ **Setup Differences:** {entry}<br>"
     
+    manifest_spec = repository_code_data.get("manifest")
+    if manifest_spec:
+        from aiida.orm import load_code
+        stored = load_code(code_label).base.extras.get(manifest_spec["extra"], {})
+        if stored.get("source_sha256") != manifest_spec["source_sha256"]:
+            return False, "⚠️ Worker manifest identity differs.<br>"
     return True, f"✅ No differences found! The stored configuration for {code_label} matches AiiDA.<br>"
 
 def aiida_computers():
@@ -124,7 +158,8 @@ def aiida_computers():
     qb.append(Computer,project=["label","id"])
     for comp in qb.all():
         computer = load_computer(comp[1])
-        if computer.is_user_enabled(user=user):
+        enabled = computer.is_user_enabled(user=user)
+        if enabled:
             active_computers.add(comp[0])
         else:
             not_active_computers.add(comp[0])
@@ -146,9 +181,9 @@ def aiida_codes():
     for code in qb.all():
         the_code=load_node(code[0])
         if the_code.is_hidden:
-            not_active_codes.add((the_code.label,the_code.computer.label,code[0]))
+            not_active_codes.add((the_code.label,(the_code.computer.label if the_code.computer else "portable"),code[0]))
         else:
-            active_codes.add((the_code.label,the_code.computer.label,code[0]))
+            active_codes.add((the_code.label,(the_code.computer.label if the_code.computer else "portable"),code[0]))
             
     active_section = ('<br>'.join([f"✅ {code[0]}  PK: {str(code[1])}" for code in (active_codes or [])]) if active_codes else "None")
     not_active_section = ('<br>'.join([f"✅⬜{code[0]} PK: {str(code[1])}" for code in (not_active_codes or [])]) if not_active_codes else "None")
@@ -169,7 +204,7 @@ def setup_aiida_computer(computer_name, config, hide=False, torelabel=False, ins
     relabeled = relabel(computer_name) if torelabel else computer_name
     commands = [["verdi", "computer", "relabel", computer_name, relabeled]] if torelabel else []    
     if hide:
-        commands.append(["verdi", "computer", "disable", relabeled, "aiida@localhost"])
+        commands.append(["verdi", "computer", "disable", relabeled, get_profile().default_user_email])
         
     for command in commands:
         output, success = run_command(command)
@@ -203,6 +238,14 @@ def setup_aiida_computer(computer_name, config, hide=False, torelabel=False, ins
             return False
         print(f"✅ Successfully set up computer '{computer_name}'.")
         
+        if setup["transport"] == "core.local":
+            output, success = run_command([
+                "verdi", "computer", "configure", "core.local", computer_name, "--non-interactive",
+            ])
+            if not success:
+                print(f"❌ Local transport configuration failed: {output}")
+            return success
+
         configure_command = [
             "verdi", "computer", "configure", setup["transport"], computer_name,
             "--username", ssh_config["username"],
@@ -241,7 +284,7 @@ def setup_aiida_computer(computer_name, config, hide=False, torelabel=False, ins
         
     return True
 
-def setup_aiida_code(code_name, code_config, hide=False, pktorelabel=False, install=False):
+def setup_aiida_code(code_name, code_config, hide=False, pktorelabel=False, install=False, identifier=None):
     """
     Sets up an AiiDA code using `verdi code create core.code.installed`.
     """
@@ -256,7 +299,9 @@ def setup_aiida_code(code_name, code_config, hide=False, pktorelabel=False, inst
             return False
     
     if hide:
-        output, success = run_command(["verdi", "code", "hide", str(pktorelabel)])
+        if not (identifier or pktorelabel):
+            raise ValueError("A code identifier is required for deactivation.")
+        output, success = run_command(["verdi", "code", "hide", str(identifier or pktorelabel)])
         if not success:
             print(f"❌ Error hiding code '{code_name}': {output}")
             return False
@@ -274,10 +319,16 @@ def setup_aiida_code(code_name, code_config, hide=False, pktorelabel=False, inst
             "--non-interactive",
         ] + (["--use-double-quotes"] if code_config.get("use_double_quotes", False) else ["--no-use-double-quotes"])
         
+        if "with_mpi" in code_config:
+            code_command.append("--with-mpi" if code_config["with_mpi"] else "--no-with-mpi")
         output, success = run_command(code_command)
         if not success:
             print(f"❌ Error setting up code '{code_name}': {output}")
             return False
+        manifest = code_config.get("_runtime_manifest")
+        if manifest:
+            from aiida.orm import load_code
+            load_code(code_name).base.extras.set(code_config["manifest"]["extra"], manifest)
         print(f"✅ Successfully set up code '{code_name}'.")
     return True
         
@@ -320,33 +371,55 @@ def check_ssh_config(config_path, config_from_yaml):
     
     return all_up_to_date, msg, reconfigure
 
-def update_ssh_config(config_path,ssh_config_data,rename=True):
-    
-    # Ensure config_path exists
+def update_ssh_config(config_path, ssh_config_data, rename=True):
+    """Update app-managed host blocks, preserving unrelated SSH configuration."""
+    config_path = Path(config_path)
     config_path.mkdir(parents=True, exist_ok=True)
-
-    # Define file paths
     config_file = config_path / "config"
-    old_config_file = config_path / relabel("config") 
-          
-    if rename and config_file.exists():
-        shutil.move(config_file, old_config_file)
-        print(f"✅ Renamed {config_file} → {old_config_file}")
-        
-    file_content = ""
-    for host in ssh_config_data:
-        #ssh_config_data[host]['user'] = username
-        file_content += f"Host {host}\n"
-        for key, value in ssh_config_data[host].items():
-            file_content += f"  {to_camel_case(key)} {value}\n"  # Capitalize the first letter of key
-        file_content += "\n"
+    if config_file.is_symlink():
+        raise ValueError("SSH config is a symbolic link; review its destination before setup.")
+    original = config_file.read_text() if config_file.exists() else ""
+    remaining = original
+    blocks = []
+    for host, settings in ssh_config_data.items():
+        begin = f"# BEGIN AiiDAlab Empa setup: {host}"
+        end = f"# END AiiDAlab Empa setup: {host}"
+        remaining = re.sub(
+            rf"(?m)^{re.escape(begin)}\n.*?^{re.escape(end)}\n?",
+            "", remaining, flags=re.DOTALL,
+        )
+        lines = [begin, f"Host {host}"]
+        lines += [f"  {to_camel_case(key)} {value}" for key, value in settings.items()]
+        lines += ["  BatchMode yes", "  StrictHostKeyChecking yes", end, ""]
+        blocks.append("\n".join(lines))
+    content = "\n".join(blocks) + "\n" + remaining.lstrip("\n")
+    if content == original:
+        return
+    if original and rename:
+        backup = config_path / f"config.backup-{datetime.now():%Y%m%d%H%M%S%f}"
+        shutil.copy2(config_file, backup)
+        print(f"✅ SSH config backup: {backup}")
+    # Atomic replacement avoids a truncated configuration after interruption.
+    with tempfile.NamedTemporaryFile(mode="w", dir=config_path, delete=False) as stream:
+        temporary = Path(stream.name)
+        stream.write(content)
+    temporary.chmod(0o600)
+    temporary.replace(config_file)
+    print("✅ Updated selected SSH hosts; other entries are preserved.")
 
 
-    with open(config_file, "w") as file:
-        file.write(file_content + "\n")  # Ensure a newline at the end
+def ssh_failure_message(host, output):
+    lower = output.lower()
+    if "host key" in lower or "authenticity" in lower:
+        action = "Verify the host key with your administrator. A changed trusted key is never accepted automatically."
+    elif "permission denied" in lower or "passphrase" in lower or "password" in lower:
+        action = "Renew the CSCS certificate in the MFA app, then retry. If your key has a passphrase, unlock it through your normal SSH agent."
+    elif "resolve hostname" in lower:
+        action = "Check the configured hostname and network/VPN; use daint.alps.cscs.ch for Daint."
+    else:
+        action = "Check network/VPN and the configured proxy, then inspect again."
+    return f"SSH connection to {host} failed: {output}\n{action}"
 
-    print(f"✅ Created new SSH config at {config_file}")
-    return
 
 def set_ssh(config, hosts):
     """
@@ -362,7 +435,17 @@ def set_ssh(config, hosts):
     
     for computer in hosts:
         proxy = config[computer]["config"].get("proxy_jump", "")
-        remotehost = config[computer]["setup"]["hostname"]
+        remotehost = config[computer].get("ssh_host", config[computer]["setup"]["hostname"])
+
+        if config[computer]["setup"].get("transport") == "core.local":
+            continue
+        if config[computer]["config"].get("proxy_command"):
+            output, ok = run_command(["ssh", remotehost, "true"])
+            if not ok:
+                print(ssh_failure_message(remotehost, output))
+                print(f"For this custom proxy route, establish trusted host keys with your normal interactive SSH login to {remotehost}, then retry.")
+                return False
+            continue
 
         if proxy:
             print(f"🔄 Adding {proxy} to known_hosts...")
@@ -380,10 +463,10 @@ def set_ssh(config, hosts):
             if not add_to_known_hosts(ssh_keyscan_command):
                 return False
 
-        ssh_check_command = ["ssh", remotehost, "ls"]
+        ssh_check_command = ["ssh", remotehost, "true"]
         command_out, command_ok = run_command(ssh_check_command)
         if not command_ok:
-            print(f"❌ SSH check failed for {remotehost}: {command_out}")
+            print(f"❌ {ssh_failure_message(remotehost, command_out)}")
             return False
 
     return True
@@ -403,33 +486,55 @@ def add_to_known_hosts(ssh_keyscan_command, hostname=None):
         bool: True if the command succeeds and returns host keys, False otherwise.
     """
     try:
-        os.makedirs(os.path.expanduser("~/.ssh"), exist_ok=True)
-        with open(os.path.expanduser("~/.ssh/known_hosts"), "a") as f:
-            known_host, success = run_command(ssh_keyscan_command)
-            if not success or not known_host:
-                print("❌ ssh-keyscan did not return a host key")
-                return False
-
-            if hostname:
-                entries = []
-                for line in known_host.splitlines():
-                    fields = line.split()
-                    if line.startswith("#") or len(fields) < 3:
-                        continue
-                    entries.append(" ".join([hostname, *fields[1:]]))
-                known_host = "\n".join(entries)
-                if not known_host:
-                    print(f"❌ No usable host key returned for {hostname}")
+        directory = Path(os.path.expanduser("~/.ssh"))
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / "known_hosts"
+        if path.is_symlink():
+            raise ValueError("known_hosts is a symbolic link; review it before setup.")
+        # Keep the empty file on failed first-time scans for backward compatibility.
+        path.touch(exist_ok=True)
+        scanned, success = run_command(ssh_keyscan_command)
+        target = hostname or ssh_keyscan_command[-1]
+        entries = []
+        for line in scanned.splitlines():
+            fields = line.split()
+            if not line.startswith("#") and len(fields) >= 3 and fields[1].startswith(("ssh-", "ecdsa-", "sk-")):
+                entries.append(" ".join([hostname or fields[0], *fields[1:3]]))
+        if not success or not entries:
+            print(f"❌ No usable host key returned for {target}: {scanned}")
+            return False
+        if path.stat().st_size:
+            existing, found = run_command(["ssh-keygen", "-F", target, "-f", str(path)])
+            if found:
+                old_keys = {tuple(line.split()[1:3]) for line in existing.splitlines() if line and not line.startswith("#")}
+                new_keys = {tuple(line.split()[1:3]) for line in entries}
+                if not old_keys & new_keys:
+                    print(f"❌ Trusted host key changed for {target}. Verify with your administrator.")
                     return False
-
-            f.write(known_host + "\n")
+                return True
+        with path.open("a") as stream:
+            stream.write("\n".join(entries) + "\n")
         return True
+    except (OSError, ValueError) as error:
+        print(f"❌ Error adding host keys: {error}")
+        return False
 
-    except subprocess.CalledProcessError as e:
-        error_msg = e.stderr.strip() if e.stderr else "Unknown error (no stderr output)"
-        print(f"❌ Error adding to known_hosts: {error_msg}")
-    
-    return False  # Failure
+
+def execute_setup_tasks(tasks, config):
+    """Run only the supporting installation tasks reviewed in the selection plan."""
+    for task in tasks:
+        computer = config["computers"][task["computer"]]
+        host = computer.get("ssh_host", computer["setup"]["hostname"])
+        print(f"🔄 Installing supporting files: {task['name']} on {host}")
+        for entry in task.get("commands", []):
+            command = entry["command"]
+            args = ["ssh", host, command] if entry["type"] == "ssh" else shlex.split(command)
+            output, success = run_command(args)
+            if not success:
+                print(f"❌ Installation task {task['name']} failed: {output}")
+                return False
+    return True
+
 
 def execute_custom_commands(yaml_commands):
     """Execute optional local and remote commands from the YAML file."""
@@ -638,3 +743,22 @@ def play_paused_workchains(paused_workchains):
     if not paused_workchains:
         return "No paused workchains to play.",True
     return run_command(["verdi", "process", "play"]+ paused_workchains.split())
+
+
+def unfinished_processes_for_computers(computer_labels):
+    """Return plain identifiers for unfinished users of affected Computer Codes."""
+    if not computer_labels:
+        return False, ""
+    qb = QueryBuilder()
+    qb.append(Computer, filters={"label": {"in": sorted(computer_labels)}}, tag="computer")
+    qb.append(Code, with_computer="computer", tag="code")
+    qb.append(
+        Node, with_incoming="code",
+        filters={
+            "node_type": {"like": "process.%"},
+            "attributes.process_state": {"!in": ["finished", "excepted", "killed"]},
+        },
+        project=["uuid", "label"],
+    )
+    rows = sorted(set((str(identifier), label) for identifier, label in qb.all()))
+    return bool(rows), ", ".join(identifier for identifier, _ in rows)
