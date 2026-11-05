@@ -150,8 +150,16 @@ reinspect and review that partial state before retrying.
 For Daint/Tigu, renew the user's own MFA credentials and use the normal configured
 SSH route. Daint host-key bootstrap precedes batch SSH checks. A passphrase-protected
 key still needs the user's normal agent unlock; the app never answers password
-prompts. Tigu's custom multi-hop route may need its normal one-time interactive
-trust/authentication setup. Unrelated SSH entries are preserved and backed up.
+prompts. In the existing Tigu route, the Docker SSH agent is forwarded to ELA,
+where `ssh-add -t 5` temporarily loads ELA's Empa key for the jump-host path.
+That private-key file can stay on ELA; the container's own `id_rsa` may be a
+different identity. Reuse the proxy configuration with fresh CSCS credentials
+and a working agent in the new instance. Do not copy the old instance's agent
+environment/socket paths. Reusing the same registered key/account needs no new
+SCI-IT registration; new Empa access or a new identity requires sending only its
+public key to SCI-IT and waiting for confirmation. Tigu's custom multi-hop route
+may still need normal first-login host-trust setup. Unrelated SSH entries are
+preserved and backed up.
 
 Quantum-worker **updates and new deployment work are deferred** for this setup
 series. Preserve existing versioned worker prefixes/Codes. The known standard

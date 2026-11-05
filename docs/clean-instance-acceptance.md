@@ -38,8 +38,10 @@ and configuration changes stay unmerged until this test is reviewed.
 9. With a missing/expired certificate or locked key, expect MFA/agent guidance,
    no repeated empty-password prompts and no partially changed registrations.
    Verify an SSH-help section for every selected remote computer. ALPS must explain
-   installing/refreshing MFA CSCS; Tigu must additionally explain its separate SSH
-   key and sending only the public key to SCI-IT for jump-host registration.
+   installing/refreshing MFA CSCS; Tigu must explain the existing ELA-key/forwarded
+   agent route and distinguish reuse from new Empa access. Only a new jump-host
+   identity needs its public key registered with SCI-IT; the existing ELA private
+   key need not be copied into the new container.
 10. Test a uenv already listed but unmountable, and a pull/migration/quota failure.
     Mount failure must stop setup with version/repository/group/path diagnostics.
     After a separately reviewed fix, repeat Inspect/Apply. The app must not force

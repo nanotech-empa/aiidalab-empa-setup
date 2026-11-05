@@ -44,8 +44,10 @@ reinspection is required. On a new instance, the first Inspect click downloads
 the catalog, after which the user chooses resources and inspects again.
 
 Each selected remote computer has an expandable SSH-help section. ALPS explains
-MFA CSCS installation and certificate renewal. Tigu also explains the separate
-Empa key and registering only its public part with SCI-IT for the jump host.
+MFA CSCS installation and certificate renewal. Tigu explains how the existing
+route loads an Empa key from ELA through the forwarded agent, so its private-key
+file need not be copied into a new container. New Empa access or a new identity
+requires registering only its public part with SCI-IT for the jump host.
 The relevant guide is repeated in the log when that computer's SSH setup fails.
 
 Every configuration change is identified by the Git commit of
