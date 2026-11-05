@@ -92,6 +92,7 @@ def get_config(
     deployment="hosted",
     computer_grants=None,
     settings=None,
+    selected_computers=None,
 ):
     """Render the configuration already on disk without fetching or switching Git."""
     config_widgets = config_widgets or {}
@@ -154,6 +155,35 @@ def get_config(
     for key, value in variables.items():
         if isinstance(value, str):
             variables[key] = replace_in_string(value, widget_replacements)
+
+    # Runtime paths can use an editable account (e.g. /store/{tigu_empa_username}).
+    runtime_replacements = {
+        key: variables[key]
+        for key in data.get("runtime_settings", {})
+        if isinstance(variables.get(key), str)
+    }
+    for key, value in variables.items():
+        if isinstance(value, str):
+            variables[key] = replace_in_string(value, runtime_replacements)
+
+    # These values enter nested SSH proxy shell commands. Validate before rendering.
+    for key, spec in data.get("runtime_settings", {}).items():
+        if selected_computers is not None and spec.get("computers") and not (
+            set(spec["computers"]) & set(selected_computers)
+        ):
+            continue
+        value = variables.get(key, "")
+        if spec.get("format") == "ssh_username" and (
+            not isinstance(value, str)
+            or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9._-]*", value)
+            or value == "select"
+        ):
+            return False, f"❌ Enter a valid {escape(spec.get('description', key))}.", {}
+        if spec.get("format") == "ssh_key_path" and (
+            not isinstance(value, str)
+            or (value and not re.fullmatch(r"(?:~/|/)[A-Za-z0-9_./-]+", value))
+        ):
+            return False, f"❌ {escape(key)} must be blank or a key path on ELA beginning with ~/ or /, without spaces or shell characters.", {}
 
     all_replacements = {}
     all_replacements.update(widget_replacements)

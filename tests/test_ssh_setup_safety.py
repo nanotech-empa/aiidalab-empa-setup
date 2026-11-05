@@ -65,3 +65,22 @@ def test_missing_certificate_is_actionable_not_a_password_retry_loop():
         "daint.alps.cscs.ch", "Permission denied (publickey)"
     )
     assert "MFA" in message and "agent" in message
+
+
+def test_selected_ela_key_change_requires_an_ssh_configuration_update(tmp_path):
+    old_proxy = "ssh jump 'ssh-add -t 5 && nc target 22'"
+    new_proxy = (
+        "ssh jump 'ssh-add -t 5 ~/.ssh/aiidalab-tigu/id_ed25519 && nc target 22'"
+    )
+    settings = {"tigu": {"hostname": "10.128.1.11", "proxy_command": old_proxy}}
+    utils.update_ssh_config(tmp_path, settings)
+    selected = {
+        "tigu": {
+            "setup": {"hostname": "10.128.1.11"},
+            "config": {"proxy_command": new_proxy},
+        }
+    }
+    assert utils.check_ssh_config(tmp_path, selected)[2] == ["tigu"]
+    settings["tigu"]["proxy_command"] = new_proxy
+    utils.update_ssh_config(tmp_path, settings)
+    assert utils.check_ssh_config(tmp_path, selected)[0]

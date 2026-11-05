@@ -33,6 +33,7 @@ from empa_setup_utils.control import (
 from empa_setup_utils.readiness import code_runtimes
 from empa_setup_utils.repo_utils import BRANCH, available_config_branches
 from empa_setup_utils.selection import selected_ssh_config
+from empa_setup_utils.ssh_onboarding import TiguKeyPreparation
 
 __version__ = "v2025.0214"
 
@@ -337,6 +338,7 @@ class ConfigAiiDAlabApp(ipw.VBox):
             self.runtime_settings[key] = widget
             settings.append(widget)
         self.runtime_setting_box.children = tuple(settings)
+        self.refresh_connection_help()
 
     def on_computers_change(self, _):
         self.invalidate_plan()
@@ -365,10 +367,28 @@ class ConfigAiiDAlabApp(ipw.VBox):
             != "core.local"
         ]
         previous = self.connection_help.children
-        self.connection_help.children = tuple(
-            ipw.HTML(connection_help_html(self.catalog["computers"][key], guides))
-            for key in remote
-        )
+        sections = []
+        for key in remote:
+            computer = self.catalog["computers"][key]
+            section = ipw.HTML(connection_help_html(computer, guides))
+            onboarding = connection_guide(computer, guides).get("onboarding", {})
+            if (
+                onboarding.get("type") == "tigu_ela_key"
+                and onboarding.get("key_setting") in self.runtime_settings
+            ):
+                section = ipw.VBox([
+                    section,
+                    TiguKeyPreparation(
+                        username=self.cscs_username,
+                        empa_username=self.tigu_username,
+                        certificate=lambda: self.catalog.get("variables", {}).get("ssh_public_key", ""),
+                        prepared=self.use_tigu_ela_key,
+                        host=onboarding["host"],
+                        contact=onboarding["contact"],
+                    ),
+                ])
+            sections.append(section)
+        self.connection_help.children = tuple(sections)
         for index, key in enumerate(remote):
             guide = connection_guide(self.catalog["computers"][key], guides)
             self.connection_help.set_title(index, f"{key}: {guide['title']}")
@@ -377,12 +397,25 @@ class ConfigAiiDAlabApp(ipw.VBox):
         for widget in previous:
             widget.close()
 
+    def cscs_username(self):
+        widget = self.config_widgets.get("cscsuser") if self.config_widgets else None
+        return widget.value if widget else "select"
+
+    def tigu_username(self):
+        widget = self.runtime_settings.get("tigu_empa_username")
+        return (widget.value if widget else "{cscsuser}").replace("{cscsuser}", self.cscs_username())
+
+    def use_tigu_ela_key(self, path):
+        self.runtime_settings["tigu_ela_key"].value = path
+        self.invalidate_plan()
+
     def config_arguments(self):
         return {
             "file_path": self.configuration_file,
             "config_widgets": self.config_widgets,
             "branch": self.config_branch_widget.value,
             "deployment": self.deployment.value,
+            "selected_computers": self.computer_selection.value,
             "computer_grants": {
                 key: widget.value
                 for key, widget in self.account_widgets.items()

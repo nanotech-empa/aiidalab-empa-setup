@@ -266,3 +266,34 @@ def test_each_selected_remote_has_help_before_authentication_check(
     assert widget.start_button.disabled
     widget.computer_selection.value = ()
     assert not widget.connection_help.children
+
+
+def test_tigu_preparation_selects_ela_key_and_invalidates_plan(cached_app):
+    widget, path, data = cached_app
+    data["computers"]["beta"]["setup"]["transport"] = "core.ssh"
+    data["computers"]["beta"]["ssh_help"] = "tigu"
+    data["variables"].update(tigu_ela_key="", tigu_empa_username="{cscsuser}")
+    data["runtime_settings"].update(tigu_ela_key={}, tigu_empa_username={})
+    data["connection_guides"] = {
+        "tigu": {
+            "title": "Tigu",
+            "onboarding": {
+                "type": "tigu_ela_key",
+                "host": "ela.cscs.ch",
+                "contact": "aliaksandr.yakutovich@empa.ch",
+                "key_setting": "tigu_ela_key",
+            },
+        }
+    }
+    path.write_text(yaml.safe_dump(data))
+    widget.config_widgets = widget.widgets_from_yaml(file_path=path)
+    widget.refresh_resource_choices()
+    preparation = widget.connection_help.children[0].children[1]
+    widget.updates_needed = {"computers": {"beta": {"install": True}}}
+    widget.start_button.disabled = False
+    preparation.prepared("~/.ssh/aiidalab-tigu/id_ed25519")
+    assert (
+        widget.runtime_settings["tigu_ela_key"].value
+        == "~/.ssh/aiidalab-tigu/id_ed25519"
+    )
+    assert widget.start_button.disabled and not widget.updates_needed

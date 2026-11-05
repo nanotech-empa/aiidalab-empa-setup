@@ -42,6 +42,13 @@ and configuration changes stay unmerged until this test is reviewed.
    agent route and distinguish reuse from new Empa access. Only a new jump-host
    identity needs its public key registered with SCI-IT; the existing ELA private
    key need not be copied into the new container.
+   On a new test account, verify that key preparation requires an explicit click,
+   creates a private dedicated key on ELA, reuses it on retry, and leaves default
+   keys intact. Check the copyable public-key request names Aliaksandr, the CSCS
+   account and the editable Empa/Tigu account, and asks about both authorizations.
+   No email is sent. After administrator activation and host-key trust setup,
+   inspect/apply and test the full route. A key-path change must invalidate the
+   plan and appear as an SSH configuration update even if no code is selected.
 10. Test a uenv already listed but unmountable, and a pull/migration/quota failure.
     Mount failure must stop setup with version/repository/group/path diagnostics.
     After a separately reviewed fix, repeat Inspect/Apply. The app must not force

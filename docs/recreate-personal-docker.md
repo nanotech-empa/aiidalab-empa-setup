@@ -156,10 +156,22 @@ That private-key file can stay on ELA; the container's own `id_rsa` may be a
 different identity. Reuse the proxy configuration with fresh CSCS credentials
 and a working agent in the new instance. Do not copy the old instance's agent
 environment/socket paths. Reusing the same registered key/account needs no new
-SCI-IT registration; new Empa access or a new identity requires sending only its
-public key to SCI-IT and waiting for confirmation. Tigu's custom multi-hop route
-may still need normal first-login host-trust setup. Unrelated SSH entries are
-preserved and backed up.
+SCI-IT registration.
+
+For new users, choose the actual **Empa/Tigu username**, then click **Prepare new
+Tigu key on ELA**. This creates/reuses `~/.ssh/aiidalab-tigu/id_ed25519` on ELA
+without a passphrase for the non-interactive proxy. It preserves default keys,
+checks the dedicated pair and displays only the public part. Send the displayed
+request to `aliaksandr.yakutovich@empa.ch` for jump-host activation and confirmation
+of Tigu authorization. Do not assume one activates the other. If Tigu needs the
+public key added separately, use an already working login or ask its administrator.
+After confirmation, inspect/apply and check both hops. The action selects the
+dedicated ELA path in the form; it does not write the live proxy until Apply.
+
+For first use, obtain trusted host-key entries for `jump1.empa.ch` and Tigu from
+SCI-IT and install them in the container's `known_hosts` using their instructions.
+The custom proxy uses strict batch SSH; a missing/changed host key stops setup.
+Unrelated SSH entries are preserved and backed up.
 
 Quantum-worker **updates and new deployment work are deferred** for this setup
 series. Preserve existing versioned worker prefixes/Codes. The known standard

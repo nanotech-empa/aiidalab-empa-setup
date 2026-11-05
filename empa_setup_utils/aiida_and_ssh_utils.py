@@ -360,6 +360,8 @@ def check_ssh_config(config_path, config_from_yaml):
         if config_exist:
             hostname_check = hostname in config_content if hostname else False
             proxy_check = proxy_string in config_content if proxy_jump else True  # Skip if empty
+            if config.get("proxy_command"):
+                proxy_check = config["proxy_command"] in config_content
             need_to_update = not (hostname_check and proxy_check)
 
         if need_to_update:
@@ -448,7 +450,7 @@ def set_ssh(config, hosts, connection_guides=None):
             output, ok = run_command(["ssh", remotehost, "true"])
             if not ok:
                 print(ssh_failure_message(remotehost, output))
-                print(f"For this custom proxy route, establish trusted host keys with your normal interactive SSH login to {remotehost}, then retry.")
+                print(f"For this custom proxy route, establish trusted host keys for its jump host and {remotehost} using your administrator's instructions, then retry.")
                 return ssh_failed(computer)
             continue
 

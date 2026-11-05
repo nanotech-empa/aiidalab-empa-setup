@@ -46,8 +46,18 @@ the catalog, after which the user chooses resources and inspects again.
 Each selected remote computer has an expandable SSH-help section. ALPS explains
 MFA CSCS installation and certificate renewal. Tigu explains how the existing
 route loads an Empa key from ELA through the forwarded agent, so its private-key
-file need not be copied into a new container. New Empa access or a new identity
-requires registering only its public part with SCI-IT for the jump host.
+file need not be copied into a new container. For new access, **Prepare new Tigu
+key on ELA** creates or reuses a dedicated unencrypted Ed25519 key there, preserving
+existing default keys. It displays only the public part in a request to copy and
+send to `aliaksandr.yakutovich@empa.ch`. The request asks for jump-host activation
+and confirmation of authorization on Tigu; both are required. The app sends no
+email and cannot grant first access on Tigu. Adding the key there needs an existing
+working login or its administrator. After confirmation, inspect/apply and test.
+The editable Empa/Tigu username defaults to the CSCS username. The ELA key setting
+defaults to blank (existing default-key route); preparation selects the dedicated
+path. Any setting change invalidates the inspected plan.
+For an existing AiiDA Computer, replacing its saved route still requires explicit
+computer updates and review; keeping the existing definition remains the default.
 The relevant guide is repeated in the log when that computer's SSH setup fails.
 
 Every configuration change is identified by the Git commit of
