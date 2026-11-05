@@ -104,13 +104,13 @@ def prepare_ela_key(username, host="ela.cscs.ch"):
 def activation_request(public_key, cscs_user, empa_user, recipient):
     return (
         f"To: {recipient}\n"
-        "Subject: Activate SSH key on the jump host for Tigu access\n\n"
+        "Subject: Add SSH key on the jump host and Tigu\n\n"
         "Hello Aliaksandr,\n\n"
-        "Please activate the following public SSH key on the jump host for my Tigu access.\n"
+        "Please add the following public SSH key to my account on both the jump host and Tigu.\n"
         f"CSCS username: {cscs_user}\nEmpa/Tigu username: {empa_user}\n\n"
         f"{public_key}\n\n"
-        "Please also confirm whether this key is authorized on Tigu, or whether its "
-        "administrator needs to add it there separately. Let me know when access is active.\n\n"
+        "Please confirm when access is active on both systems. If adding the key on Tigu "
+        "requires another administrator, please forward this request or let me know whom to contact.\n\n"
         "Thank you."
     )
 

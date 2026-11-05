@@ -162,8 +162,8 @@ For new users, choose the actual **Empa/Tigu username**, then click **Prepare ne
 Tigu key on ELA**. This creates/reuses `~/.ssh/aiidalab-tigu/id_ed25519` on ELA
 without a passphrase for the non-interactive proxy. It preserves default keys,
 checks the dedicated pair and displays only the public part. Send the displayed
-request to `aliaksandr.yakutovich@empa.ch` for jump-host activation and confirmation
-of Tigu authorization. Do not assume one activates the other. If Tigu needs the
+request to `aliaksandr.yakutovich@empa.ch`, explicitly asking to add the public key
+on both the jump host and Tigu and confirm when both are ready. If Tigu needs the
 public key added separately, use an already working login or ask its administrator.
 After confirmation, inspect/apply and check both hops. The action selects the
 dedicated ELA path in the form; it does not write the live proxy until Apply.

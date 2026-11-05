@@ -49,8 +49,8 @@ route loads an Empa key from ELA through the forwarded agent, so its private-key
 file need not be copied into a new container. For new access, **Prepare new Tigu
 key on ELA** creates or reuses a dedicated unencrypted Ed25519 key there, preserving
 existing default keys. It displays only the public part in a request to copy and
-send to `aliaksandr.yakutovich@empa.ch`. The request asks for jump-host activation
-and confirmation of authorization on Tigu; both are required. The app sends no
+send to `aliaksandr.yakutovich@empa.ch`. The request explicitly asks to add the key
+on both the jump host and Tigu, and to confirm when both are ready. The app sends no
 email and cannot grant first access on Tigu. Adding the key there needs an existing
 working login or its administrator. After confirmation, inspect/apply and test.
 The editable Empa/Tigu username defaults to the CSCS username. The ELA key setting

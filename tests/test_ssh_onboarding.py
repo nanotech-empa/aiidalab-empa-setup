@@ -194,7 +194,10 @@ def test_widget_is_opt_in_and_waits_for_registration(tmp_path, monkeypatch):
         assert public in widget.request.value
         assert "aliaksandr.yakutovich@empa.ch" in widget.request.value
         assert "Empa/Tigu username: empaaccount" in widget.request.value
-        assert "authorized on Tigu" in widget.request.value
+        assert (
+            "Please add the following public SSH key to my account on both the jump host and Tigu."
+            in widget.request.value
+        )
         assert "wait for confirmation" in widget.status.value
         monkeypatch.setattr(ssh_onboarding, "key_is_valid", lambda path: False)
         widget.button.click()
