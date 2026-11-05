@@ -7,8 +7,10 @@ and configuration changes stay unmerged until this test is reviewed.
 1. Follow [the recreation runbook](recreate-personal-docker.md) through creation of
    a new image/volume, version checks, GitHub authentication and installation of
    the selected app/plugin sources. Record image digest and CPU/RAM/architecture.
-2. Install setup branch `feature/selective-safe-setup` and choose configuration
-   branch `feature/setup-readiness-checks`. Record **both full commit hashes**;
+2. Install setup branch `feature/selective-safe-setup`. On a new instance, click
+   **Inspect updates** once to download the catalog, then choose configuration
+   branch `feature/setup-readiness-checks` and inspect again. Opening the app or
+   changing the branch must not fetch anything. Record **both full commit hashes**;
    do not mix the old setup app with schema 2. The displayed configuration
    revision must match the intended checkout.
 3. Choose **Personal Docker** and only `mac-localhost`, with only PythonJob first.
@@ -35,7 +37,9 @@ and configuration changes stay unmerged until this test is reviewed.
    Daint's first normal connection is non-interactive after host-key bootstrap.
 9. With a missing/expired certificate or locked key, expect MFA/agent guidance,
    no repeated empty-password prompts and no partially changed registrations.
-   Custom Tigu multi-hop first-login prerequisites must be reported explicitly.
+   Verify an SSH-help section for every selected remote computer. ALPS must explain
+   installing/refreshing MFA CSCS; Tigu must additionally explain its separate SSH
+   key and sending only the public key to SCI-IT for jump-host registration.
 10. Test a uenv already listed but unmountable, and a pull/migration/quota failure.
     Mount failure must stop setup with version/repository/group/path diagnostics.
     After a separately reviewed fix, repeat Inspect/Apply. The app must not force
@@ -46,6 +50,9 @@ and configuration changes stay unmerged until this test is reviewed.
 12. Confirm selected-resource running/paused jobs block affected reconfiguration
     even when old, while unrelated computers do not block the plan. Change any
     account, code, deployment or path after inspection and verify Apply is invalidated.
+   Publish another configuration commit while the app is open: it must wait until
+   the next Inspect click. Refresh must preserve compatible selections and must
+   not automatically select newly added codes. Apply must not fetch a new revision.
 13. Switch to **CSCS Kubernetes**: local scientific codes disappear from choices;
     existing local/custom resources are retained. Check PythTB in the app environment.
 14. Run computer/code tests and approved small real jobs, including retrieval,

@@ -24,7 +24,8 @@ from aiida.orm import (
     load_node,
 )
 
-from .string_utils import normalize_text, relabel, to_camel_case  #remove_placeholders
+from .connection_help import print_connection_help
+from .string_utils import normalize_text, relabel, to_camel_case
 
 
 def run_command(command, max_retries=5, verbose=False):
@@ -421,7 +422,7 @@ def ssh_failure_message(host, output):
     return f"SSH connection to {host} failed: {output}\n{action}"
 
 
-def set_ssh(config, hosts):
+def set_ssh(config, hosts, connection_guides=None):
     """
     Adds SSH host keys to known_hosts for the specified hosts.
 
@@ -433,6 +434,10 @@ def set_ssh(config, hosts):
         bool: True if SSH check succeeds, False otherwise.
     """
     
+    def ssh_failed(computer):
+        print_connection_help(computer, config[computer], connection_guides)
+        return False
+
     for computer in hosts:
         proxy = config[computer]["config"].get("proxy_jump", "")
         remotehost = config[computer].get("ssh_host", config[computer]["setup"]["hostname"])
@@ -444,30 +449,30 @@ def set_ssh(config, hosts):
             if not ok:
                 print(ssh_failure_message(remotehost, output))
                 print(f"For this custom proxy route, establish trusted host keys with your normal interactive SSH login to {remotehost}, then retry.")
-                return False
+                return ssh_failed(computer)
             continue
 
         if proxy:
             print(f"🔄 Adding {proxy} to known_hosts...")
             ssh_keyscan_command = ["ssh-keyscan", "-H", proxy]
             if not add_to_known_hosts(ssh_keyscan_command):
-                return False
+                return ssh_failed(computer)
 
             print(f"🔄 Adding {remotehost} via {proxy} to known_hosts...")
             ssh_keyscan_command = ["ssh", proxy, "ssh-keyscan", remotehost]
             if not add_to_known_hosts(ssh_keyscan_command, hostname=remotehost):
-                return False
+                return ssh_failed(computer)
         else:
             print(f"🔄 Adding {remotehost} to known_hosts...")
             ssh_keyscan_command = ["ssh-keyscan", "-H", remotehost]
             if not add_to_known_hosts(ssh_keyscan_command):
-                return False
+                return ssh_failed(computer)
 
         ssh_check_command = ["ssh", remotehost, "true"]
         command_out, command_ok = run_command(ssh_check_command)
         if not command_ok:
             print(f"❌ {ssh_failure_message(remotehost, command_out)}")
-            return False
+            return ssh_failed(computer)
 
     return True
 

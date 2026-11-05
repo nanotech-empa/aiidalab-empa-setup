@@ -74,7 +74,7 @@ def test_personal_configuration_creates_local_computer_and_code_without_ssh(
     path = tmp_path / "config.yml"
     path.write_text(yaml.safe_dump(config))
     monkeypatch.delenv("KUBERNETES_SERVICE_HOST", raising=False)
-    monkeypatch.setattr(start, "available_config_branches", lambda: ["main"])
+    monkeypatch.setattr(start, "available_config_branches", lambda **kwargs: ["main"])
     monkeypatch.setattr(start, "check_repository", lambda **kwargs: (True, ""))
     monkeypatch.setattr(control, "check_repository", lambda **kwargs: (True, ""))
     monkeypatch.setattr(control, "get_local_commit", lambda: "test-revision")
@@ -85,12 +85,12 @@ def test_personal_configuration_creates_local_computer_and_code_without_ssh(
     monkeypatch.setattr(
         start.ConfigAiiDAlabApp,
         "widgets_from_yaml",
-        lambda self, **kwargs: original(self, file_path=path, **kwargs),
+        lambda self, **kwargs: original(self, **{**kwargs, "file_path": path}),
     )
     monkeypatch.setattr(
         start,
         "get_config",
-        lambda **kwargs: control.get_config(file_path=path, **kwargs),
+        lambda **kwargs: control.get_config(**{**kwargs, "file_path": path}),
     )
     monkeypatch.setattr(control, "config_path", tmp_path / "ssh")
     monkeypatch.setattr(start, "config_path", tmp_path / "ssh")

@@ -37,12 +37,12 @@ SUPPORTED_SCHEMA_VERSION = 2
 
 # Check repository of config files
 def check_repository(branch=BRANCH):
-    """Check if the repository exists and pull the latest changes."""
-    msg = "<b style='color:green;'>✅ Repository is up to date.</b>"
+    """Synchronize the selected remote branch when the user requests inspection."""
+    msg = "✅ Configuration synchronized. Review the inspected changes before applying."
     if not os.path.exists(GIT_REPO_PATH):
         msg = (
             "<b style='color:orange;'>⚠️ Repository updated. "
-            "Please inspect and then apply changes.</b>"
+            "Review the inspected changes before applying.</b>"
         )
         if not clone_repository(branch=branch):
             return (
@@ -63,10 +63,10 @@ def check_repository(branch=BRANCH):
 
     if not remote_commit:
         return (
-            True,
+            False,
             (
-                "<b style='color:orange;'>⚠️ Using local config branch "
-                f"'{branch}'. No matching remote branch was found.</b>"
+                "❌ Cannot synchronize the selected configuration branch "
+                f"'{escape(branch)}'. Check the connection and remote branch, then inspect again."
             ),
         )
 
@@ -76,7 +76,11 @@ def check_repository(branch=BRANCH):
                 False,
                 "<b style='color:red;'>❌ Failed to update the repository.</b>",
             )
-        msg = "<b style='color:orange;'>⚠️ Repository updated. Please apply changes.</b>"
+        if get_local_commit() != remote_commit:
+            return (
+                False,
+                "❌ The local configuration has unpublished changes. They were preserved; reconcile the branch and inspect again.",
+            )
 
     return True, msg
 
@@ -89,7 +93,7 @@ def get_config(
     computer_grants=None,
     settings=None,
 ):
-    """Get the configuration from the YAML file."""
+    """Render the configuration already on disk without fetching or switching Git."""
     config_widgets = config_widgets or {}
 
     for key, widget in config_widgets.items():
@@ -97,10 +101,6 @@ def get_config(
             key == "cscsuser" and deployment == "personal" and not computer_grants
         ):
             return False, f"<b style='color:red;'>❌please select {key}</b>", {}
-
-    status_ok, msg = check_repository(branch=branch)
-    if not status_ok:
-        return status_ok, msg, {}
 
     try:
         data = load_config_bundle(file_path)
@@ -178,6 +178,12 @@ def get_config(
     }
 
     return True, "", data
+
+
+def inspected_revision_is_current(config):
+    """Apply only the local Git revision that was explicitly inspected."""
+    revision = config.get("_metadata", {}).get("config_revision")
+    return bool(revision and revision != "unknown" and revision == get_local_commit())
 
 
 def _configured_computer_labels(defined_computers):

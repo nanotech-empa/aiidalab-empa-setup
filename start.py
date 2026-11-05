@@ -1,10 +1,12 @@
 import asyncio
-import functools
 import os
 import platform
 from datetime import datetime
+from html import escape
+from pathlib import Path
 
 import ipywidgets as ipw
+import yaml
 
 from empa_setup_utils.aiida_and_ssh_utils import (
     execute_custom_commands,
@@ -17,11 +19,13 @@ from empa_setup_utils.aiida_and_ssh_utils import (
     update_ssh_config,
 )
 from empa_setup_utils.configuration import load_config_bundle
+from empa_setup_utils.connection_help import connection_guide, connection_help_html
 from empa_setup_utils.control import (
     check_for_updates,
     check_repository,
     config_path,
     get_config,
+    inspected_revision_is_current,
     manage_uenv_images,
     setup_codes,
     setup_computers,
@@ -29,7 +33,6 @@ from empa_setup_utils.control import (
 from empa_setup_utils.readiness import code_runtimes
 from empa_setup_utils.repo_utils import BRANCH, available_config_branches
 from empa_setup_utils.selection import selected_ssh_config
-from empa_setup_utils.string_utils import remove_green_check_lines
 
 __version__ = "v2025.0214"
 
@@ -63,6 +66,7 @@ class ConfigAiiDAlabApp(ipw.VBox):
         self.update_computer_definitions.observe(self.invalidate_plan, names="value")
         self.account_widgets = {}
         self.account_selectors = ipw.VBox()
+        self.connection_help = ipw.Accordion(selected_index=None)
         self.runtime_settings = {}
         self.runtime_setting_box = ipw.VBox()
         self.computer_selection = ipw.SelectMultiple(
@@ -118,8 +122,8 @@ class ConfigAiiDAlabApp(ipw.VBox):
         self.subtitle = ipw.HTML("")
         self.output = ipw.Output()
 
-        self.config_widgets = self.widgets_from_yaml(
-            branch=self.config_branch_widget.value
+        self.config_widgets = (
+            self.widgets_from_yaml(branch=self.config_branch_widget.value) or {}
         )
         self.refresh_resource_choices()
         some_paused_calculations, self.paused_calculations = (
@@ -155,6 +159,7 @@ class ConfigAiiDAlabApp(ipw.VBox):
                 self.computer_selection,
                 self.all_computers_button,
                 self.account_selectors,
+                self.connection_help,
                 self.update_computer_definitions,
                 self.code_selection,
                 self.all_codes_button,
@@ -165,38 +170,6 @@ class ConfigAiiDAlabApp(ipw.VBox):
                 self.output,
             ]
         )
-
-        # Start periodic checks
-        # asyncio.create_task(self._start_periodic_check_updates(60))
-        # asyncio.create_task(self._start_periodic_check_old_workchains(60))
-
-    async def _start_periodic_check_updates(self, interval):
-        """Periodically check for updates."""
-        while True:
-            if self.check:
-                status_ok, msg, self.config = await asyncio.to_thread(
-                    functools.partial(
-                        get_config,
-                        config_widgets=self.config_widgets,
-                        branch=self.config_branch_widget.value,
-                    )
-                )
-                if status_ok:
-                    msg, self.updates_needed = await asyncio.to_thread(
-                        functools.partial(
-                            check_for_updates,
-                            self.config,
-                            self.config_widgets["grant"].value,
-                        )
-                    )
-                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                msg = remove_green_check_lines(msg)
-                if not msg:
-                    msg = "✅ Nothing to report"
-                self.update_message.value = (
-                    f"<b>{timestamp}</b>: {remove_green_check_lines(msg)}"
-                )
-            await asyncio.sleep(interval)
 
     async def _start_periodic_check_old_workchains(self, interval):
         """Periodically check for pending too old workchains."""
@@ -214,33 +187,31 @@ class ConfigAiiDAlabApp(ipw.VBox):
         self.updates_needed = {}
 
     def on_config_branch_change(self, change):
-        """Reload YAML-driven selector widgets after switching config branch."""
+        """Require manual inspection before loading the newly selected branch."""
         if change["old"] == change["new"]:
             return
 
         self.invalidate_plan()
         self.config = {}
-        self.config_widgets = self.widgets_from_yaml(branch=change["new"])
-        self.refresh_resource_choices()
-        self.deactivate_computers = {}
-        self.deactivate_codes = {}
-        self.unmanaged_choices.children = ()
-        self.selectors.children = (
-            tuple(self.config_widgets.values()) if self.config_widgets else ()
-        )
+        self.update_message.value = "Click Inspect updates to synchronize and inspect the selected configuration branch."
 
     def widgets_from_yaml(
         self,
         file_path="/home/jovyan/opt/aiidalab-alps-files/config.yml",
         branch=BRANCH,
     ):
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        status_ok, msg = check_repository(branch=branch)
-        if not status_ok:
-            self.update_message.value = f"<b>{timestamp}</b>: {msg}"
+        """Read cached selectors; opening the app never contacts or updates Git."""
+        self.configuration_file = Path(file_path)
+        try:
+            data = load_config_bundle(file_path)
+        except FileNotFoundError:
+            self.update_message.value = "Click Inspect updates to download the configuration and choose what to set up."
             return None
-        self.update_message.value = f"<b>{timestamp}</b>: {msg}"
-        data = load_config_bundle(file_path)
+        except (OSError, ValueError, yaml.YAMLError) as error:
+            self.update_message.value = (
+                f"❌ Cannot read cached configuration: {escape(str(error))}"
+            )
+            return None
 
         self.catalog = data
         yaml_widgets = data.get("widgets", {})
@@ -248,7 +219,10 @@ class ConfigAiiDAlabApp(ipw.VBox):
             key: ipw.Dropdown(description=key, options=options)
             for key, options in yaml_widgets.items()
         }
-        for widget in widgets.values():
+        previous = getattr(self, "config_widgets", {}) or {}
+        for key, widget in widgets.items():
+            if key in previous and previous[key].value in widget.options:
+                widget.value = previous[key].value
             widget.observe(self.on_context_change, names="value")
         return widgets
 
@@ -300,7 +274,15 @@ class ConfigAiiDAlabApp(ipw.VBox):
         self.deactivate_codes = {}
         self.unmanaged_choices.children = ()
 
-    def refresh_resource_choices(self):
+    def refresh_resource_choices(self, preserve=False):
+        previous_computers = self.computer_selection.value
+        previous_codes = self.code_selection.value
+        previous_accounts = {
+            key: widget.value for key, widget in self.account_widgets.items()
+        }
+        previous_settings = {
+            key: widget.value for key, widget in self.runtime_settings.items()
+        }
         grant_widget = self.config_widgets.get("grant") if self.config_widgets else None
         eligible = tuple(
             key
@@ -319,11 +301,23 @@ class ConfigAiiDAlabApp(ipw.VBox):
                         style={"description_width": "160px"},
                         layout=ipw.Layout(width="390px"),
                     )
+                    if preserve and previous_accounts.get(key) in widget.options:
+                        widget.value = previous_accounts[key]
                     widget.observe(self.invalidate_plan, names="value")
                     self.account_widgets[key] = widget
+        self.computer_selection.unobserve(self.on_computers_change, names="value")
         self.computer_selection.options = eligible
-        self.computer_selection.value = eligible
+        self.computer_selection.value = (
+            tuple(key for key in previous_computers if key in eligible)
+            if preserve
+            else eligible
+        )
+        self.computer_selection.observe(self.on_computers_change, names="value")
         self.on_computers_change(None)
+        if preserve:
+            self.code_selection.value = tuple(
+                key for key in previous_codes if key in self.code_selection.options
+            )
         self.runtime_settings = {}
         settings = []
         for key, spec in self.catalog.get("runtime_settings", {}).items():
@@ -333,7 +327,9 @@ class ConfigAiiDAlabApp(ipw.VBox):
                 continue
             widget = ipw.Text(
                 description=spec.get("description", key),
-                value=str(self.catalog.get("variables", {}).get(key, "")),
+                value=previous_settings[key]
+                if preserve and key in previous_settings
+                else str(self.catalog.get("variables", {}).get(key, "")),
                 style={"description_width": "210px"},
                 layout=ipw.Layout(width="95%"),
             )
@@ -344,6 +340,7 @@ class ConfigAiiDAlabApp(ipw.VBox):
 
     def on_computers_change(self, _):
         self.invalidate_plan()
+        self.refresh_connection_help()
         options = tuple(
             key
             for key, data in self.catalog.get("codes", {}).items()
@@ -359,8 +356,30 @@ class ConfigAiiDAlabApp(ipw.VBox):
             if key in self.computer_selection.value
         )
 
+    def refresh_connection_help(self):
+        guides = self.catalog.get("connection_guides", {})
+        remote = [
+            key
+            for key in self.computer_selection.value
+            if self.catalog["computers"][key]["setup"].get("transport", "core.ssh")
+            != "core.local"
+        ]
+        previous = self.connection_help.children
+        self.connection_help.children = tuple(
+            ipw.HTML(connection_help_html(self.catalog["computers"][key], guides))
+            for key in remote
+        )
+        for index, key in enumerate(remote):
+            guide = connection_guide(self.catalog["computers"][key], guides)
+            self.connection_help.set_title(index, f"{key}: {guide['title']}")
+        self.connection_help.selected_index = None
+        self.connection_help.layout.display = "block" if remote else "none"
+        for widget in previous:
+            widget.close()
+
     def config_arguments(self):
         return {
+            "file_path": self.configuration_file,
             "config_widgets": self.config_widgets,
             "branch": self.config_branch_widget.value,
             "deployment": self.deployment.value,
@@ -439,8 +458,65 @@ class ConfigAiiDAlabApp(ipw.VBox):
             )
         self.unmanaged_choices.children = tuple(rows)
 
+    def synchronize_for_inspection(self):
+        """Fetch first, then reload selectors without widening the user's selection."""
+        branch = self.config_branch_widget.value
+        status, message = check_repository(branch=branch)
+        if not status:
+            self.update_message.value = message
+            return False
+        old_catalog = self.catalog
+        old_widgets = self.config_widgets
+        old_computers = set(self.computer_selection.value)
+        old_codes = set(self.code_selection.value)
+        old_values = {key: widget.value for key, widget in old_widgets.items()}
+        old_accounts = {
+            key: widget.value
+            for key, widget in self.account_widgets.items()
+            if key in old_computers
+        }
+        widgets = self.widgets_from_yaml(
+            file_path=self.configuration_file, branch=branch
+        )
+        if widgets is None:
+            return False
+        self.config_widgets = widgets
+        self.selectors.children = tuple(widgets.values())
+        changed = old_catalog != self.catalog
+        if changed:
+            self.refresh_resource_choices(preserve=bool(old_catalog))
+        for widget in old_widgets.values():
+            widget.close()
+        options = list(
+            dict.fromkeys([*available_config_branches(include_remote=True), branch])
+        )
+        self.config_branch_widget.unobserve(self.on_config_branch_change, names="value")
+        self.config_branch_widget.options = options
+        self.config_branch_widget.value = branch
+        self.config_branch_widget.observe(self.on_config_branch_change, names="value")
+        lost_choice = (
+            not old_computers <= set(self.computer_selection.value)
+            or not old_codes <= set(self.code_selection.value)
+            or any(
+                key not in widgets or widgets[key].value != value
+                for key, value in old_values.items()
+            )
+            or any(
+                key not in self.account_widgets
+                or self.account_widgets[key].value != value
+                for key, value in old_accounts.items()
+            )
+        )
+        if changed and lost_choice:
+            self.update_message.value = "Configuration refreshed. Some previous choices are no longer available; review your selections and inspect again."
+            return False
+        return True
+
     def check_for_all_updates(self, _):
         self.invalidate_plan()
+        self.config = {}
+        if not self.synchronize_for_inspection():
+            return
         if any(
             widget.value == "select"
             for key, widget in self.account_widgets.items()
@@ -463,8 +539,11 @@ class ConfigAiiDAlabApp(ipw.VBox):
         if remote_selected and not key_is_valid(
             public_key_file=self.config.get("variables", {}).get("ssh_public_key", "")
         ):
+            if self.connection_help.children:
+                self.connection_help.selected_index = 0
             self.update_message.value = (
-                "❌ Renew your CSCS certificate in the MFA app, then inspect again."
+                "❌ Missing or expired CSCS SSH certificate. Install or open MFA CSCS, "
+                "refresh or renew it, then inspect again. See the SSH connection help section."
             )
             return
         msg, self.updates_needed = check_for_updates(
@@ -510,6 +589,9 @@ class ConfigAiiDAlabApp(ipw.VBox):
 
     def _apply_configuration(self):
         self.output.clear_output()
+        if not inspected_revision_is_current(self.config):
+            self.update_message.value = "The local configuration revision changed. Inspect again before applying."
+            return
         # Reinspect immediately to reject stale resource choices and new running work.
         msg, fresh = check_for_updates(
             self.config, self.selected_grant(), **self.selection_arguments()
@@ -538,7 +620,11 @@ class ConfigAiiDAlabApp(ipw.VBox):
                 ssh_settings = selected_ssh_config(self.config, remote_computers)
                 if ssh_settings:
                     update_ssh_config(config_path, ssh_settings)
-                if not set_ssh(self.config["computers"], computers):
+                if not set_ssh(
+                    self.config["computers"],
+                    computers,
+                    self.config.get("connection_guides", {}),
+                ):
                     self.update_message.value = "❌ SSH check failed. Follow the diagnostic above and inspect again."
                     return
             requirements = code_runtimes(self.config, chosen.get("codes", []))

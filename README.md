@@ -29,13 +29,26 @@ The app reads user-facing computer, code, SSH, uenv, and custom-command
 configuration from `/home/jovyan/opt/aiidalab-alps-files/config.yml`.
 The setup app is responsible for:
 
-- pulling the latest configuration repository;
+- synchronizing the configuration repository when the user clicks **Inspect updates**;
 - resolving widget and variable placeholders from the YAML file;
 - checking that the optional YAML `schema_version` is supported;
 - comparing the selected configuration with the current AiiDA profile;
 - showing the user the required changes before applying them.
 
-Every configuration change is identified automatically by the Git commit of
+Opening the app reads the cached configuration without contacting GitHub. There
+is no background configuration polling. **Inspect updates** first synchronizes the
+selected ALPS branch, preserves compatible choices and builds a plan from that
+revision. A failed sync stops inspection. **Apply updates** uses the inspected
+revision without fetching; if another session changes the local Git revision,
+reinspection is required. On a new instance, the first Inspect click downloads
+the catalog, after which the user chooses resources and inspects again.
+
+Each selected remote computer has an expandable SSH-help section. ALPS explains
+MFA CSCS installation and certificate renewal. Tigu also explains the separate
+Empa key and registering only its public part with SCI-IT for the jump host.
+The relevant guide is repeated in the log when that computer's SSH setup fails.
+
+Every configuration change is identified by the Git commit of
 `aiidalab-alps-files`; routine edits such as adding a user do not require a
 manual config version bump.
 
