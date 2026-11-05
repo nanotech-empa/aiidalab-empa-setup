@@ -28,6 +28,7 @@ def _run_git(args, cwd=None, check=True):
 def clone_repository(branch=BRANCH):
     """Clone the repository if it does not exist."""
     try:
+        GIT_REPO_PATH.parent.mkdir(parents=True, exist_ok=True)
         subprocess.run(
             ["git", "clone", "-b", branch, GIT_URL, GIT_REPO_PATH],
             capture_output=True,
@@ -35,7 +36,7 @@ def clone_repository(branch=BRANCH):
             check=True,
         )
         return True  # Repo was successfully cloned
-    except subprocess.CalledProcessError:
+    except (OSError, subprocess.CalledProcessError):
         return False  # Failed to clone
 
 
@@ -43,7 +44,7 @@ def get_latest_remote_commit(branch=BRANCH):
     """Fetch the latest commit hash from the remote repository."""
     try:
         result = _run_git(
-            ["ls-remote", GIT_REMOTE, branch],
+            ["ls-remote", "--heads", GIT_REMOTE, f"refs/heads/{branch}"],
             cwd=GIT_REPO_PATH,
         )
         return result.stdout.split()[0] if result.stdout else None
@@ -95,14 +96,23 @@ def get_remote_branches():
     return branches
 
 
-def available_config_branches():
-    """Return branches suitable for the developer branch selector."""
+def available_config_branches(include_remote=False):
+    """List cached branches; contact the remote only on an explicit inspection."""
     branches = [BRANCH]
     if GIT_REPO_PATH.exists():
         current = get_current_branch()
         branches.extend(branch for branch in [current] if branch)
         branches.extend(get_local_branches())
-        branches.extend(get_remote_branches())
+        try:
+            cached = _run_git([
+                "for-each-ref", "--format=%(refname:strip=3)",
+                f"refs/remotes/{GIT_REMOTE}",
+            ])
+            branches.extend(name for name in cached.stdout.splitlines() if name != "HEAD")
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            pass
+        if include_remote:
+            branches.extend(get_remote_branches())
 
     return list(dict.fromkeys(branches))
 

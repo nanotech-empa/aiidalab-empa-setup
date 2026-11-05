@@ -1,6 +1,8 @@
 import os
 import re
 from datetime import datetime
+from html import escape
+from importlib.metadata import entry_points
 from pathlib import Path
 
 import yaml
@@ -11,9 +13,12 @@ from .aiida_and_ssh_utils import (
     check_ssh_config,
     compare_code_configuration,
     compare_computer_configuration,
-    run_command,
     setup_aiida_code,
     setup_aiida_computer,
+)
+from .configuration import load_config_bundle
+from .readiness import (
+    manage_uenv_images as manage_uenv_images,  # public compatibility import
 )
 from .repo_utils import (
     BRANCH,
@@ -25,19 +30,19 @@ from .repo_utils import (
     pull_latest_changes,
     switch_config_branch,
 )
-from .string_utils import extract_first_column
+from .selection import installation_tasks, select_resources
 
-SUPPORTED_SCHEMA_VERSION = 1
+SUPPORTED_SCHEMA_VERSION = 2
 
 
 # Check repository of config files
 def check_repository(branch=BRANCH):
-    """Check if the repository exists and pull the latest changes."""
-    msg = "<b style='color:green;'>✅ Repository is up to date.</b>"
+    """Synchronize the selected remote branch when the user requests inspection."""
+    msg = "✅ Configuration synchronized. Review the inspected changes before applying."
     if not os.path.exists(GIT_REPO_PATH):
         msg = (
             "<b style='color:orange;'>⚠️ Repository updated. "
-            "Please inspect and then apply changes.</b>"
+            "Review the inspected changes before applying.</b>"
         )
         if not clone_repository(branch=branch):
             return (
@@ -58,39 +63,50 @@ def check_repository(branch=BRANCH):
 
     if not remote_commit:
         return (
-            True,
+            False,
             (
-                "<b style='color:orange;'>⚠️ Using local config branch "
-                f"'{branch}'. No matching remote branch was found.</b>"
+                "❌ Cannot synchronize the selected configuration branch "
+                f"'{escape(branch)}'. Check the connection and remote branch, then inspect again."
             ),
         )
 
     if local_commit != remote_commit:
         if not pull_latest_changes(branch=branch):
-            return False, "<b style='color:red;'>❌ Failed to update the repository.</b>"
-        msg = "<b style='color:orange;'>⚠️ Repository updated. Please apply changes.</b>"
+            return (
+                False,
+                "<b style='color:red;'>❌ Failed to update the repository.</b>",
+            )
+        if get_local_commit() != remote_commit:
+            return (
+                False,
+                "❌ The local configuration has unpublished changes. They were preserved; reconcile the branch and inspect again.",
+            )
 
     return True, msg
 
 
 def get_config(
-    file_path='/home/jovyan/opt/aiidalab-alps-files/config.yml',
+    file_path="/home/jovyan/opt/aiidalab-alps-files/config.yml",
     config_widgets=None,
     branch=BRANCH,
+    deployment="hosted",
+    computer_grants=None,
+    settings=None,
+    selected_computers=None,
 ):
-    """Get the configuration from the YAML file."""
+    """Render the configuration already on disk without fetching or switching Git."""
     config_widgets = config_widgets or {}
 
     for key, widget in config_widgets.items():
-        if widget.value == "select":
+        if widget.value == "select" and not (
+            key == "cscsuser" and deployment == "personal" and not computer_grants
+        ):
             return False, f"<b style='color:red;'>❌please select {key}</b>", {}
 
-    status_ok, msg = check_repository(branch=branch)
-    if not status_ok:
-        return status_ok, msg, {}
-
-    with open(file_path, 'r') as f:
-        data = yaml.safe_load(f)
+    try:
+        data = load_config_bundle(file_path)
+    except (OSError, ValueError, yaml.YAMLError) as error:
+        return False, f"❌ Cannot read configuration: {escape(str(error))}", {}
 
     try:
         schema_version = int(data.get("schema_version", 1))
@@ -112,8 +128,9 @@ def get_config(
         )
 
     variables = data.get("variables", {})
-    if 'timestamp' in variables and variables['timestamp'] == 'now':
-        variables['timestamp'] = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+    variables.update(settings or {})
+    if "timestamp" in variables and variables["timestamp"] == "now":
+        variables["timestamp"] = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
     widgets = data.get("widgets", {})
 
     def replace_in_string(s, replacements):
@@ -139,32 +156,80 @@ def get_config(
         if isinstance(value, str):
             variables[key] = replace_in_string(value, widget_replacements)
 
+    # Runtime paths can use an editable account (e.g. /store/{tigu_empa_username}).
+    runtime_replacements = {
+        key: variables[key]
+        for key in data.get("runtime_settings", {})
+        if isinstance(variables.get(key), str)
+    }
+    for key, value in variables.items():
+        if isinstance(value, str):
+            variables[key] = replace_in_string(value, runtime_replacements)
+
+    # These values enter nested SSH proxy shell commands. Validate before rendering.
+    for key, spec in data.get("runtime_settings", {}).items():
+        if selected_computers is not None and spec.get("computers") and not (
+            set(spec["computers"]) & set(selected_computers)
+        ):
+            continue
+        value = variables.get(key, "")
+        if spec.get("format") == "ssh_username" and (
+            not isinstance(value, str)
+            or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9._-]*", value)
+            or value == "select"
+        ):
+            return False, f"❌ Enter a valid {escape(spec.get('description', key))}.", {}
+        if spec.get("format") == "ssh_key_path" and (
+            not isinstance(value, str)
+            or (value and not re.fullmatch(r"(?:~/|/)[A-Za-z0-9_./-]+", value))
+        ):
+            return False, f"❌ {escape(key)} must be blank or a key path on ELA beginning with ~/ or /, without spaces or shell characters.", {}
+
     all_replacements = {}
     all_replacements.update(widget_replacements)
+    all_replacements.update(settings or {})
     all_replacements.update(
         {key: value for key, value in variables.items() if isinstance(value, str)}
     )
 
+    # Resolve per-computer accounts before the global legacy grant placeholder.
+    account_map = computer_grants or {}
+    for key, computer in data.get("computers", {}).items():
+        grant = account_map.get(key, widget_replacements.get("grant"))
+        if grant is not None:
+            data["computers"][key] = recursive_replace(computer, {"grant": grant})
     data = recursive_replace(data, all_replacements)
+    data["_deployment"] = deployment
+    data["_computer_grants"] = account_map
     data["_metadata"] = {
         "schema_version": schema_version,
         "config_branch": branch,
-        "config_revision": (get_local_commit() or "unknown")[:12],
+        "config_revision": get_local_commit() or "unknown",
     }
 
-    return True, '', data
+    return True, "", data
+
+
+def inspected_revision_is_current(config):
+    """Apply only the local Git revision that was explicitly inspected."""
+    revision = config.get("_metadata", {}).get("config_revision")
+    return bool(revision and revision != "unknown" and revision == get_local_commit())
 
 
 def _configured_computer_labels(defined_computers):
     """Return labels that may appear in AiiDA for all configured grants."""
     labels = []
     for computer_name, computer_data in defined_computers.items():
-        label_template = computer_data.get("setup", {}).get("label", computer_name)
-        for grant in computer_data.get("grants", []):
-            if "{grant}" in label_template:
-                labels.append(label_template.replace("{grant}", grant))
-            else:
-                labels.append(f"{computer_name}_{grant}")
+        template = computer_data.get("setup", {}).get("label", computer_name)
+        grants = computer_data.get("grants", [])
+        if not grants:
+            labels.append(template)
+        for grant in grants:
+            labels.append(
+                template.replace("{grant}", grant)
+                if "{grant}" in template
+                else f"{computer_name}_{grant}"
+            )
     return labels
 
 
@@ -191,256 +256,181 @@ def _queue_update(updates_needed, section, label, **update):
     updates_needed.setdefault(section, {})[label] = update
 
 
-def check_for_updates(config, selected_grant):
-    """Check the user's AiiDA setup against the selected YAML configuration."""
-    status, msg, updates_needed = process_aiida_configuration(
-        config, config_path, selected_grant
+def check_for_updates(config, selected_grant, **selection):
+    status, msg, updates = process_aiida_configuration(
+        config, config_path, selected_grant, **selection
     )
-    if not status:
-        return msg, {}
-    if not updates_needed:
-        return "<b style='color:green;'>✅ Your configuration is up to date.</b>", {}
-    return msg, updates_needed
+    return msg, updates if status else {}
 
 
-def process_aiida_configuration(config, config_path, selected_grant):
+def process_aiida_configuration(
+    config,
+    config_path,
+    selected_grant,
+    selected_computers=None,
+    selected_codes=None,
+    deactivate_computers=(),
+    deactivate_codes=(),
+    update_computers=False,
+):
+    """Inspect selected resources. Unlisted resources are kept unless explicitly chosen.
+
+    Inspection has no profile, SSH, filesystem or remote mutation. All identifiers
+    stored in the plan are plain values, never ORM objects.
     """
-    Reads the YAML configuration file, renames the existing SSH config, 
-    creates a new SSH config from the YAML file, and checks installed vs. missing AiiDA computers.
-    
-    :param configuration_file: Path to the YAML configuration file.
-    :param config_path: Path to the SSH config directory.
-    :return: Formatted string with the results.
-    """
-    updates_needed = {}
-    config_path = Path(config_path)
-    result_msg = ""
-
-    config_ok, msg, config_hosts = check_ssh_config(config_path, config["computers"])
-    result_msg += msg
+    try:
+        computers, codes = select_resources(
+            config, selected_grant, selected_computers, selected_codes
+        )
+        tasks = installation_tasks(config, computers, codes)
+    except (KeyError, TypeError, ValueError) as error:
+        return False, f"❌ {escape(str(error))}<br>", {}
+    selected = {key: config["computers"][key] for key in computers}
+    plan = {
+        "selection": {"computers": sorted(computers), "codes": sorted(codes)},
+        "tasks": tasks,
+        "unmanaged": {"computers": [], "codes": {}},
+        "blocked": [],
+    }
+    remote_selected = {
+        key: data
+        for key, data in selected.items()
+        if data["setup"].get("transport", "core.ssh") != "core.local"
+    }
+    config_ok, msg, config_hosts = check_ssh_config(Path(config_path), remote_selected)
     if not config_ok:
-        updates_needed["ssh_config"] = {
-            "rename": "not properly" in msg,
-            "hosts": config_hosts,
-        }
+        plan["ssh_config"] = {"rename": True, "hosts": config_hosts}
+    status, computer_msg, active_computers, inactive_computers = aiida_computers()
+    codes_ok, code_msg, active_codes, inactive_codes = aiida_codes()
+    if not (status and codes_ok):
+        return False, msg + computer_msg + code_msg, {}
 
-    status_computers, msg, active_computers, not_active_computers = aiida_computers()
-    result_msg += msg
-    status_codes, msg, active_codes, not_active_codes = aiida_codes()
-    result_msg += msg
-    if not (status_computers and status_codes):
-        return False, result_msg + msg
-
-    defined_computers = config.get("computers", {})
-    valid_computer_grants = _configured_computer_labels(defined_computers)
-    selected_computer_grants = _selected_computer_labels(
-        defined_computers, selected_grant
+    defined = config.get("computers", {})
+    valid_computers = set(_configured_computer_labels(defined))
+    valid_computers.update(data["setup"]["label"] for data in defined.values())
+    valid_codes = {
+        f"{data['label']}@{label}"
+        for data in config.get("codes", {}).values()
+        for label in _configured_computer_labels(
+            {data["computer"]: defined[data["computer"]]}
+        )
+    }
+    valid_codes.update(
+        f"{data['label']}@{defined[data['computer']]['setup']['label']}"
+        for data in config.get("codes", {}).values()
     )
-
-    valid_computer_grants += ["localhost"]
-
-    for computer in active_computers:
-        if computer not in valid_computer_grants:
-            result_msg += (
-                f"⚠️ Computer '{computer}' is installed in AiiDA but is not foreseen "
-                "in the configuration file.<br>"
-            )
-            _queue_update(
-                updates_needed,
-                "computers",
-                computer,
-                hide=True,
-                rename=False,
-                install=False,
-            )
-
-    for comp_data in defined_computers.values():
-        full_comp = comp_data["setup"]["label"]
-        if full_comp in active_computers:
-            result_msg += (
-                f"✅⬜ Computer '{full_comp}' is already installed in AiiDA, "
-                "checking for its configuration.<br>"
-            )
-            is_up_to_date, msg = compare_computer_configuration(full_comp, comp_data)
-            result_msg += msg
-            if not is_up_to_date:
-                install = full_comp in selected_computer_grants
-                _queue_update(
-                    updates_needed,
-                    "computers",
-                    full_comp,
-                    hide=True,
-                    rename=True,
-                    install=install,
-                )
-
-        elif full_comp in not_active_computers:
-            result_msg += f"⬜ Computer '{full_comp}' is listed but NOT active in AiiDA.<br>"
-            install = full_comp in selected_computer_grants
-            _queue_update(
-                updates_needed,
-                "computers",
-                full_comp,
-                hide=False,
-                rename=True,
-                install=install,
-            )
-
-        else:
-            install = full_comp in selected_computer_grants
-            if install:
-                result_msg += f"❌ Computer '{full_comp}' is completely missing from AiiDA.<br>"
-                _queue_update(
-                    updates_needed,
-                    "computers",
-                    full_comp,
-                    hide=False,
-                    rename=False,
-                    install=install,
-                )
-
-    defined_codes = config.get("codes", {})
-    for codename, codecomputer, code_pk in active_codes:
-        code_label = f"{codename}@{codecomputer}"
-        if codecomputer not in valid_computer_grants:
-            result_msg += (
-                f"⚠️ Code '{codename}' is installed in AiiDA but its computer/grant "
-                "is not defined in the configuration file.<br>"
-            )
-            _queue_update(
-                updates_needed,
-                "codes",
-                code_label,
-                hide=code_pk,
-                rename=code_pk,
-                install=False,
-            )
-
-    for code_key, code_data in defined_codes.items():
-        computer = defined_computers[code_data["computer"]]["setup"]["label"]
-        install = computer in selected_computer_grants
-        computer_update = updates_needed.get("computers", {}).get(computer, {})
-        computer_will_be_outdated = bool(computer_update) and not computer_update.get(
-            "install", False
-        )
-        computer_will_be_installed = bool(computer_update) and computer_update.get(
-            "install", False
-        )
-        computer_up_to_date = computer in active_computers and not computer_will_be_installed
-        code_label = f"{code_data['label']}@{computer}"
-        code_pk_active = next(
-            (
-                pk
-                for codename, codecomputer, pk in active_codes
-                if f"{codename}@{codecomputer}" == code_label
-            ),
-            None,
-        )
-        code_pk_not_active = next(
-            (
-                pk
-                for codename, codecomputer, pk in not_active_codes
-                if f"{codename}@{codecomputer}" == code_label
-            ),
-            None,
+    plan["unmanaged"]["computers"] = sorted(active_computers - valid_computers)
+    plan["unmanaged"]["codes"] = {
+        f"{label}@{computer}": pk
+        for label, computer, pk in sorted(active_codes)
+        if f"{label}@{computer}" not in valid_codes
+    }
+    if not set(deactivate_computers) <= set(plan["unmanaged"]["computers"]):
+        return False, "❌ The computer choices changed. Inspect again.<br>", {}
+    if not set(deactivate_codes) <= set(plan["unmanaged"]["codes"]):
+        return False, "❌ The code choices changed. Inspect again.<br>", {}
+    for label in deactivate_computers:
+        _queue_update(plan, "computers", label, hide=True, rename=False, install=False)
+    for label in deactivate_codes:
+        _queue_update(
+            plan,
+            "codes",
+            label,
+            hide=True,
+            rename=False,
+            install=False,
+            identifier=plan["unmanaged"]["codes"][label],
         )
 
-        msg = f"✅ Code {code_label} is already installed in AiiDA.<br>"
+    for key in sorted(computers):
+        data = defined[key]
+        label = data["setup"]["label"]
+        if label in active_computers:
+            equal, detail = compare_computer_configuration(label, data)
+            msg += detail
+            if equal:
+                continue
+            if not update_computers:
+                msg += f"⚠️ Keeping the existing definition of {escape(label)}. Enable computer updates to replace it.<br>"
+                continue
+        _queue_update(
+            plan,
+            "computers",
+            label,
+            computer_key=key,
+            hide=label in active_computers,
+            rename=label in active_computers or label in inactive_computers,
+            install=True,
+        )
 
-        if computer_will_be_outdated:
-            if code_pk_active is not None:
+    installed_plugins = {ep.name for ep in entry_points(group="aiida.calculations")}
+    for key in sorted(codes):
+        data = config["codes"][key]
+        plugin = data.get("default_calc_job_plugin")
+        if plugin and plugin not in installed_plugins:
+            plan["blocked"].append(
+                f"Install the app/plugin providing {plugin} before configuring {key}."
+            )
+        computer = defined[data["computer"]]["setup"]["label"]
+        label = f"{data['label']}@{computer}"
+        active_pk = next(
+            (pk for name, comp, pk in active_codes if f"{name}@{comp}" == label), None
+        )
+        inactive_pk = next(
+            (pk for name, comp, pk in inactive_codes if f"{name}@{comp}" == label), None
+        )
+        replacing_computer = (
+            plan.get("computers", {}).get(computer, {}).get("install", False)
+        )
+        if active_pk is not None and not replacing_computer:
+            equal, detail = compare_code_configuration(
+                label, {**data, "computer": computer}
+            )
+            msg += detail
+            if equal:
                 _queue_update(
-                    updates_needed,
-                    "codes",
-                    code_label,
-                    code_key=code_key,
-                    rename=code_pk_active,
-                    hide=True,
-                    install=False,
+                    plan, "codes", label, code_key=key, checkuenv=True, install=False
                 )
-                msg = (
-                    f"⚠️ Code {code_label} is installed in AiiDA on an old computer. "
-                    "It will be renamed and reinstalled.<br>"
-                )
-            elif code_pk_not_active is not None:
-                _queue_update(
-                    updates_needed,
-                    "codes",
-                    code_label,
-                    code_key=code_key,
-                    rename=code_pk_not_active,
-                    hide=False,
-                    install=False,
-                )
-                msg = (
-                    f"⚠️ Code {code_label} is installed but not active and points to "
-                    "an old computer. It will be renamed and reinstalled.<br>"
-                )
-        elif computer_will_be_installed:
-            if install:
-                _queue_update(
-                    updates_needed,
-                    "codes",
-                    code_label,
-                    code_key=code_key,
-                    rename=False,
-                    install=True,
-                )
-                msg = f"⬜ Code {code_label} will be installed  {computer} will be installed.<br>"
-        elif computer_up_to_date:
-            if install:
-                if code_pk_active is not None:
-                    codes_equal, msg = compare_code_configuration(code_label, code_data)
-                    if not codes_equal:
-                        _queue_update(
-                            updates_needed,
-                            "codes",
-                            code_label,
-                            code_key=code_key,
-                            rename=code_pk_active,
-                            install=True,
-                        )
-                        msg = f"⬜ Code {code_label} will be installed  {computer} is present.<br>"
-                    else:
-                        _queue_update(
-                            updates_needed,
-                            "codes",
-                            code_label,
-                            code_key=code_key,
-                            checkuenv=True,
-                            install=False,
-                        )
-                        msg = (
-                            f"✅ Code {code_label} is already installed and up-to-date; "
-                            "uenv availability will be checked.<br>"
-                        )
-                elif code_pk_not_active is not None:
-                    _queue_update(
-                        updates_needed,
-                        "codes",
-                        code_label,
-                        code_key=code_key,
-                        rename=code_pk_not_active,
-                        install=True,
-                    )
-                    msg = (
-                        f"⬜ Code {code_label} will be installed; the old inactive "
-                        "code will be renamed.<br>"
-                    )
-                else:
-                    _queue_update(
-                        updates_needed,
-                        "codes",
-                        code_label,
-                        code_key=code_key,
-                        rename=False,
-                        install=True,
-                    )
-                    msg = f"⬜ Code {code_label} will be installed  {computer} is present.<br>"
+                continue
+        _queue_update(
+            plan,
+            "codes",
+            label,
+            code_key=key,
+            hide=active_pk is not None,
+            rename=active_pk or inactive_pk or False,
+            install=True,
+        )
 
-        result_msg += msg
-
-    return True, result_msg, updates_needed
+    # Replacing a Computer also affects codes outside the chosen code subset.
+    # Refuse that implicit side effect; never silently retire a kept code.
+    for label, update in plan.get("computers", {}).items():
+        if update.get("install") and update.get("rename"):
+            kept = [
+                f"{name}@{computer}"
+                for name, computer, _ in active_codes
+                if computer == label
+                and f"{name}@{computer}" not in plan.get("codes", {})
+            ]
+            if kept:
+                plan["blocked"].append(
+                    f"Replacing {label} would affect kept codes: {', '.join(sorted(kept))}. "
+                    "Select their managed definitions, explicitly deactivate unlisted "
+                    "codes, or deselect this computer."
+                )
+    for section in ("computers", "codes"):
+        for label, update in plan.get(section, {}).items():
+            action = (
+                "Install/replace"
+                if update.get("install")
+                else ("Check runtime" if update.get("checkuenv") else "Deactivate")
+            )
+            msg += f"⬜ {action}: {escape(label)}<br>"
+    for task in tasks:
+        msg += f"⬜ Install supporting files: {escape(task['name'])}<br>"
+    for problem in plan["blocked"]:
+        msg += f"❌ {escape(problem)}<br>"
+    return True, msg, plan
 
 
 def setup_computers(computers_to_setup, defined_computers):
@@ -500,106 +490,9 @@ def setup_codes(codes_to_setup, config):
             hide=hide,
             pktorelabel=pktorelabel,
             install=install,
+            identifier=update.get("identifier"),
         )
         if not status:
             return False, uenvs
 
     return True, uenvs
-
-
-def manage_uenv_images(uenvs):
-    """
-    Ensure that required uenv images are available on a remote host.
-    
-    :param remote_host: The remote machine where commands will be executed.
-    :param uenvs: A list of required uenv images (e.g., ['cp2k/2024.3:v2', 'qe/7.4:v2'])
-    """
-
-    # Step 1: Check if the uenv repo exists, if not, create it
-    hosts = {uenv[0] for uenv in uenvs}
-    for remotehost in hosts:
-        print(f"🔍 Checking UENV repository status on {remotehost}")
-        command = ["ssh", remotehost, "uenv", "repo", "status"]
-        repo_status, command_ok = run_command(command)
-        if not command_ok:
-            print(f"❌ Failed to check UENV repo status on {remotehost}. Exiting.")
-            return False
-        
-        if (
-            "not found" in repo_status.lower()
-            or not repo_status
-            or "no repository" in repo_status.lower()
-        ):
-            print(f"⚠️ UENV repo not found. Creating repository...")
-            command = ["ssh", remotehost, "uenv", "repo", "create"]
-            command_out, command_ok = run_command(command)
-            if not command_ok:
-                print(f"❌ Failed to create UENV repo on {remotehost}. Exiting.")
-                return False
-        else:
-            print(f"✅ UENV repo is available on {remotehost}.")
-
-    # Step 2: Get the list of images available to the user
-    available_images = {}
-    for remotehost in hosts:
-        print(f"🔍 Fetching available UENV images on {remotehost} for the user ")
-        command = ["ssh", remotehost, "uenv", "image", "ls"]
-        command_out, command_ok = run_command(command)
-        #print(extract_first_column(command_out))
-        if not command_ok:
-            print(f"❌ Failed to fetch UENV images on {remotehost}. Exiting.")
-            return False
-        available_images.setdefault(remotehost,{})['user'] = extract_first_column(command_out)
-
-        # Step 3: Get the list of all images available on the system
-        print("🔍 Fetching available UENV images (system-wide)")
-        
-        command = ["ssh", remotehost, "uenv", "image", "find"]
-        command_out, command_ok = run_command(command)
-        #print(extract_first_column(command_out))
-        if not command_ok:
-            print("❌ Failed to fetch system-wide UENV images. Exiting.")
-            return False
-        available_images.setdefault(remotehost,{})['host'] = extract_first_column(command_out)
-        # Get the list of all images available on service:: (if any)
-        print("🔍 Fetching available UENV images on service::")        
-        command = ["ssh", remotehost, "uenv", "image", "find", "service::"]
-        command_out,command_ok = run_command(command)
-        #print(extract_first_column(command_out))
-        if not command_ok:
-            print("❌ Failed to fetch service UENV images. Exiting.")
-            return False    
-        available_images.setdefault(remotehost,{})['service'] = extract_first_column(command_out)
-
-    # Step 4: Check missing images and pull them if necessary
-    for uenv in uenvs:
-        env = uenv[1]
-        remotehost = uenv[0]
-        if env in available_images[remotehost]['user']:
-            print(f"✅ Image '{env}' is already available for the user on {remotehost}.")
-        elif env in available_images[remotehost]['host']:
-            print(f"✅ Image '{env}' is available on the host {remotehost}. Pulling...")
-            command = ["ssh", remotehost, "uenv", "image", "pull", env]
-            command_out, command_ok = run_command(command)
-            if not command_ok:
-                print(f"❌ Failed to pull image '{env}' on {remotehost}: {command_out}")
-                return False
-        elif env in available_images[remotehost]['service']:
-            print(
-                f"✅ Image '{env}' is available in the service repo on {remotehost}. "
-                "Pulling from service::..."
-            )
-            command = ["ssh", remotehost, "uenv", "image", "pull", f"service::{env}"]
-            command_out, command_ok = run_command(command)
-            if not command_ok:
-                print(f"❌ Failed to pull service image '{env}' on {remotehost}: {command_out}")
-                return False
-        else:
-            print(
-                f"❌ Image '{env}' is not available anywhere on {remotehost}! "
-                "Manual intervention needed."
-            )
-            return False
-
-    print("✅ UENV management complete.")
-    return True
