@@ -1,29 +1,39 @@
 import asyncio
-import functools
+import os
+import platform
 from datetime import datetime
+from html import escape
+from pathlib import Path
 
 import ipywidgets as ipw
 import yaml
 
 from empa_setup_utils.aiida_and_ssh_utils import (
     execute_custom_commands,
+    execute_setup_tasks,
     get_old_unfinished_workchains,
     key_is_valid,
     play_paused_workchains,
     set_ssh,
+    unfinished_processes_for_computers,
     update_ssh_config,
 )
+from empa_setup_utils.configuration import load_config_bundle
+from empa_setup_utils.connection_help import connection_guide, connection_help_html
 from empa_setup_utils.control import (
     check_for_updates,
     check_repository,
     config_path,
     get_config,
+    inspected_revision_is_current,
     manage_uenv_images,
     setup_codes,
     setup_computers,
 )
+from empa_setup_utils.readiness import code_runtimes
 from empa_setup_utils.repo_utils import BRANCH, available_config_branches
-from empa_setup_utils.string_utils import remove_green_check_lines
+from empa_setup_utils.selection import selected_ssh_config
+from empa_setup_utils.ssh_onboarding import TiguKeyPreparation
 
 __version__ = "v2025.0214"
 
@@ -37,8 +47,52 @@ class ConfigAiiDAlabApp(ipw.VBox):
         self.running_workchains = ipw.HTML("")
         self.paused_workchains = ipw.HTML("")
         self.check = True  # Disabled while applying updates.
+        self.catalog = {}
         self.config = {}
         self.updates_needed = {}
+        self.deployment = ipw.Dropdown(
+            description="Deployment",
+            options=[("CSCS Kubernetes", "hosted"), ("Personal Docker", "personal")],
+            value="hosted" if os.environ.get("KUBERNETES_SERVICE_HOST") else "personal",
+            style={"description_width": "110px"},
+            layout=ipw.Layout(width="430px"),
+        )
+        self.deployment.observe(self.on_context_change, names="value")
+        self.update_computer_definitions = ipw.Checkbox(
+            value=False,
+            description="Update existing computer definitions",
+            indent=False,
+            layout=ipw.Layout(width="95%"),
+        )
+        self.update_computer_definitions.observe(self.invalidate_plan, names="value")
+        self.account_widgets = {}
+        self.account_selectors = ipw.VBox()
+        self.connection_help = ipw.Accordion(selected_index=None)
+        self.runtime_settings = {}
+        self.runtime_setting_box = ipw.VBox()
+        self.computer_selection = ipw.SelectMultiple(
+            description="Computers", options=[], rows=4
+        )
+        self.code_selection = ipw.SelectMultiple(
+            description="Codes", options=[], rows=8, layout=ipw.Layout(width="95%")
+        )
+        self.computer_selection.observe(self.on_computers_change, names="value")
+        self.code_selection.observe(self.invalidate_plan, names="value")
+        self.unmanaged_choices = ipw.VBox()
+        self.deactivate_computers = {}
+        self.deactivate_codes = {}
+        self.all_computers_button = ipw.Button(description="All computers")
+        self.all_computers_button.on_click(
+            lambda _: setattr(
+                self.computer_selection, "value", tuple(self.computer_selection.options)
+            )
+        )
+        self.all_codes_button = ipw.Button(description="All codes")
+        self.all_codes_button.on_click(
+            lambda _: setattr(
+                self.code_selection, "value", tuple(self.code_selection.options)
+            )
+        )
         self.config_branch_widget = ipw.Dropdown(
             description="Config branch",
             options=available_config_branches(),
@@ -48,7 +102,9 @@ class ConfigAiiDAlabApp(ipw.VBox):
         )
         self.config_branch_widget.observe(self.on_config_branch_change, names="value")
 
-        self.check_button = ipw.Button(description="Inspect updates", button_style="info")
+        self.check_button = ipw.Button(
+            description="Inspect updates", button_style="info"
+        )
         self.check_button.on_click(self.check_for_all_updates)
 
         self.start_button = ipw.Button(
@@ -67,9 +123,10 @@ class ConfigAiiDAlabApp(ipw.VBox):
         self.subtitle = ipw.HTML("")
         self.output = ipw.Output()
 
-        self.config_widgets = self.widgets_from_yaml(
-            branch=self.config_branch_widget.value
+        self.config_widgets = (
+            self.widgets_from_yaml(branch=self.config_branch_widget.value) or {}
         )
+        self.refresh_resource_choices()
         some_paused_calculations, self.paused_calculations = (
             self.check_paused_workchains()
         )
@@ -92,42 +149,28 @@ class ConfigAiiDAlabApp(ipw.VBox):
                 self.paused_workchains,
                 self.update_message,
                 self.config_branch_widget,
+                self.deployment,
+                ipw.HTML(
+                    f"Container architecture: <b>{platform.machine()}</b>. Local codes run inside this Linux container."
+                ),
                 self.selectors,
+                ipw.HTML(
+                    "<b>Choose what to configure</b><br>Select one or more entries (Cmd/Ctrl-click). Unselected resources are kept."
+                ),
+                self.computer_selection,
+                self.all_computers_button,
+                self.account_selectors,
+                self.connection_help,
+                self.update_computer_definitions,
+                self.code_selection,
+                self.all_codes_button,
+                self.runtime_setting_box,
+                self.unmanaged_choices,
                 controls,
                 self.subtitle,
                 self.output,
             ]
         )
-
-        # Start periodic checks
-        # asyncio.create_task(self._start_periodic_check_updates(60))
-        # asyncio.create_task(self._start_periodic_check_old_workchains(60))
-
-    async def _start_periodic_check_updates(self, interval):
-        """Periodically check for updates."""
-        while True:
-            if self.check:
-                status_ok, msg, self.config = await asyncio.to_thread(
-                    functools.partial(
-                        get_config,
-                        config_widgets=self.config_widgets,
-                        branch=self.config_branch_widget.value,
-                    )
-                )
-                if status_ok:
-                    msg, self.updates_needed = await asyncio.to_thread(
-                        functools.partial(
-                            check_for_updates,
-                            self.config,
-                            self.config_widgets["grant"].value,
-                        )
-                    )
-                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                msg = remove_green_check_lines(msg)
-                if not msg:
-                    msg = "✅ Nothing to report"
-                self.update_message.value = f"<b>{timestamp}</b>: {remove_green_check_lines(msg)}"
-            await asyncio.sleep(interval)
 
     async def _start_periodic_check_old_workchains(self, interval):
         """Periodically check for pending too old workchains."""
@@ -145,38 +188,43 @@ class ConfigAiiDAlabApp(ipw.VBox):
         self.updates_needed = {}
 
     def on_config_branch_change(self, change):
-        """Reload YAML-driven selector widgets after switching config branch."""
+        """Require manual inspection before loading the newly selected branch."""
         if change["old"] == change["new"]:
             return
 
         self.invalidate_plan()
         self.config = {}
-        self.config_widgets = self.widgets_from_yaml(branch=change["new"])
-        self.selectors.children = (
-            tuple(self.config_widgets.values()) if self.config_widgets else ()
-        )
+        self.update_message.value = "Click Inspect updates to synchronize and inspect the selected configuration branch."
 
     def widgets_from_yaml(
         self,
         file_path="/home/jovyan/opt/aiidalab-alps-files/config.yml",
         branch=BRANCH,
     ):
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        status_ok, msg = check_repository(branch=branch)
-        if not status_ok:
-            self.update_message.value = f"<b>{timestamp}</b>: {msg}"
+        """Read cached selectors; opening the app never contacts or updates Git."""
+        self.configuration_file = Path(file_path)
+        try:
+            data = load_config_bundle(file_path)
+        except FileNotFoundError:
+            self.update_message.value = "Click Inspect updates to download the configuration and choose what to set up."
             return None
-        self.update_message.value = f"<b>{timestamp}</b>: {msg}"
-        with open(file_path, "r") as f:
-            data = yaml.safe_load(f)
+        except (OSError, ValueError, yaml.YAMLError) as error:
+            self.update_message.value = (
+                f"❌ Cannot read cached configuration: {escape(str(error))}"
+            )
+            return None
 
+        self.catalog = data
         yaml_widgets = data.get("widgets", {})
         widgets = {
             key: ipw.Dropdown(description=key, options=options)
             for key, options in yaml_widgets.items()
         }
-        for widget in widgets.values():
-            widget.observe(self.invalidate_plan, names="value")
+        previous = getattr(self, "config_widgets", {}) or {}
+        for key, widget in widgets.items():
+            if key in previous and previous[key].value in widget.options:
+                widget.value = previous[key].value
+            widget.observe(self.on_context_change, names="value")
         return widgets
 
     def check_paused_workchains(self):
@@ -220,49 +268,340 @@ class ConfigAiiDAlabApp(ipw.VBox):
                 f"<b>{output}</b>: Workchains are not resumed, please check"
             )
 
+    def on_context_change(self, _):
+        self.invalidate_plan()
+        self.refresh_resource_choices()
+        self.deactivate_computers = {}
+        self.deactivate_codes = {}
+        self.unmanaged_choices.children = ()
+
+    def refresh_resource_choices(self, preserve=False):
+        previous_computers = self.computer_selection.value
+        previous_codes = self.code_selection.value
+        previous_accounts = {
+            key: widget.value for key, widget in self.account_widgets.items()
+        }
+        previous_settings = {
+            key: widget.value for key, widget in self.runtime_settings.items()
+        }
+        grant_widget = self.config_widgets.get("grant") if self.config_widgets else None
+        eligible = tuple(
+            key
+            for key, data in self.catalog.get("computers", {}).items()
+            if self.deployment.value in data.get("deployments", ["hosted", "personal"])
+            and (not grant_widget or grant_widget.value in data.get("grants", []))
+        )
+        self.account_widgets = {}
+        if not grant_widget:
+            for key in eligible:
+                grants = self.catalog["computers"][key].get("grants", [])
+                if grants:
+                    widget = ipw.Dropdown(
+                        description=f"{key} account",
+                        options=grants if len(grants) == 1 else ["select", *grants],
+                        style={"description_width": "160px"},
+                        layout=ipw.Layout(width="390px"),
+                    )
+                    if preserve and previous_accounts.get(key) in widget.options:
+                        widget.value = previous_accounts[key]
+                    widget.observe(self.invalidate_plan, names="value")
+                    self.account_widgets[key] = widget
+        self.computer_selection.unobserve(self.on_computers_change, names="value")
+        self.computer_selection.options = eligible
+        self.computer_selection.value = (
+            tuple(key for key in previous_computers if key in eligible)
+            if preserve
+            else eligible
+        )
+        self.computer_selection.observe(self.on_computers_change, names="value")
+        self.on_computers_change(None)
+        if preserve:
+            self.code_selection.value = tuple(
+                key for key in previous_codes if key in self.code_selection.options
+            )
+        self.runtime_settings = {}
+        settings = []
+        for key, spec in self.catalog.get("runtime_settings", {}).items():
+            if self.deployment.value not in spec.get(
+                "deployments", ["hosted", "personal"]
+            ):
+                continue
+            widget = ipw.Text(
+                description=spec.get("description", key),
+                value=previous_settings[key]
+                if preserve and key in previous_settings
+                else str(self.catalog.get("variables", {}).get(key, "")),
+                style={"description_width": "210px"},
+                layout=ipw.Layout(width="95%"),
+            )
+            widget.observe(self.invalidate_plan, names="value")
+            self.runtime_settings[key] = widget
+            settings.append(widget)
+        self.runtime_setting_box.children = tuple(settings)
+        self.refresh_connection_help()
+
+    def on_computers_change(self, _):
+        self.invalidate_plan()
+        self.refresh_connection_help()
+        options = tuple(
+            key
+            for key, data in self.catalog.get("codes", {}).items()
+            if data["computer"] in self.computer_selection.value
+            and self.deployment.value in data.get("deployments", ["hosted", "personal"])
+            and platform.machine() in data.get("architectures", [platform.machine()])
+        )
+        self.code_selection.options = options
+        self.code_selection.value = options
+        self.account_selectors.children = tuple(
+            widget
+            for key, widget in self.account_widgets.items()
+            if key in self.computer_selection.value
+        )
+
+    def refresh_connection_help(self):
+        guides = self.catalog.get("connection_guides", {})
+        remote = [
+            key
+            for key in self.computer_selection.value
+            if self.catalog["computers"][key]["setup"].get("transport", "core.ssh")
+            != "core.local"
+        ]
+        previous = self.connection_help.children
+        sections = []
+        for key in remote:
+            computer = self.catalog["computers"][key]
+            section = ipw.HTML(connection_help_html(computer, guides))
+            onboarding = connection_guide(computer, guides).get("onboarding", {})
+            if (
+                onboarding.get("type") == "tigu_ela_key"
+                and onboarding.get("key_setting") in self.runtime_settings
+            ):
+                section = ipw.VBox([
+                    section,
+                    TiguKeyPreparation(
+                        username=self.cscs_username,
+                        empa_username=self.tigu_username,
+                        certificate=lambda: self.catalog.get("variables", {}).get("ssh_public_key", ""),
+                        prepared=self.use_tigu_ela_key,
+                        host=onboarding["host"],
+                        contact=onboarding["contact"],
+                    ),
+                ])
+            sections.append(section)
+        self.connection_help.children = tuple(sections)
+        for index, key in enumerate(remote):
+            guide = connection_guide(self.catalog["computers"][key], guides)
+            self.connection_help.set_title(index, f"{key}: {guide['title']}")
+        self.connection_help.selected_index = None
+        self.connection_help.layout.display = "block" if remote else "none"
+        for widget in previous:
+            widget.close()
+
+    def cscs_username(self):
+        widget = self.config_widgets.get("cscsuser") if self.config_widgets else None
+        return widget.value if widget else "select"
+
+    def tigu_username(self):
+        widget = self.runtime_settings.get("tigu_empa_username")
+        return (widget.value if widget else "{cscsuser}").replace("{cscsuser}", self.cscs_username())
+
+    def use_tigu_ela_key(self, path):
+        self.runtime_settings["tigu_ela_key"].value = path
+        self.invalidate_plan()
+
+    def config_arguments(self):
+        return {
+            "file_path": self.configuration_file,
+            "config_widgets": self.config_widgets,
+            "branch": self.config_branch_widget.value,
+            "deployment": self.deployment.value,
+            "selected_computers": self.computer_selection.value,
+            "computer_grants": {
+                key: widget.value
+                for key, widget in self.account_widgets.items()
+                if key in self.computer_selection.value
+            },
+            "settings": {
+                key: widget.value for key, widget in self.runtime_settings.items()
+            },
+        }
+
+    def selected_grant(self):
+        widget = self.config_widgets.get("grant") if self.config_widgets else None
+        return widget.value if widget else None
+
+    def selection_arguments(self):
+        return {
+            "update_computers": self.update_computer_definitions.value,
+            "selected_computers": self.computer_selection.value,
+            "selected_codes": self.code_selection.value,
+            "deactivate_computers": tuple(
+                key for key, widget in self.deactivate_computers.items() if widget.value
+            ),
+            "deactivate_codes": tuple(
+                key for key, widget in self.deactivate_codes.items() if widget.value
+            ),
+        }
+
+    def affected_computer_labels(self):
+        labels = {
+            self.config["computers"][key]["setup"]["label"]
+            for key in self.computer_selection.value
+        }
+        labels.update(
+            key for key, widget in self.deactivate_computers.items() if widget.value
+        )
+        labels.update(
+            key.rsplit("@", 1)[-1]
+            for key, widget in self.deactivate_codes.items()
+            if widget.value
+        )
+        return labels
+
+    def show_unmanaged_choices(self):
+        unmanaged = self.updates_needed.get("unmanaged", {})
+        rows = []
+        for section, choices in (
+            ("computers", self.deactivate_computers),
+            ("codes", self.deactivate_codes),
+        ):
+            current = {}
+            for label in unmanaged.get(section, []):
+                widget = choices.get(label) or ipw.Checkbox(
+                    value=False,
+                    description=f"Deactivate {label}",
+                    indent=False,
+                    layout=ipw.Layout(width="100%"),
+                )
+                if label not in choices:
+                    widget.observe(self.invalidate_plan, names="value")
+                current[label] = widget
+                rows.append(widget)
+            choices.clear()
+            choices.update(current)
+        if rows:
+            rows.insert(
+                0,
+                ipw.HTML(
+                    "<b>These codes/computers are not supported by this configuration. Keep them or deactivate?</b><br>"
+                    "Keep is the default. Check only those to deactivate, then inspect again. "
+                    "Disabling a computer prevents new use of all codes on it. "
+                    "Existing calculation data is retained."
+                ),
+            )
+        self.unmanaged_choices.children = tuple(rows)
+
+    def synchronize_for_inspection(self):
+        """Fetch first, then reload selectors without widening the user's selection."""
+        branch = self.config_branch_widget.value
+        status, message = check_repository(branch=branch)
+        if not status:
+            self.update_message.value = message
+            return False
+        old_catalog = self.catalog
+        old_widgets = self.config_widgets
+        old_computers = set(self.computer_selection.value)
+        old_codes = set(self.code_selection.value)
+        old_values = {key: widget.value for key, widget in old_widgets.items()}
+        old_accounts = {
+            key: widget.value
+            for key, widget in self.account_widgets.items()
+            if key in old_computers
+        }
+        widgets = self.widgets_from_yaml(
+            file_path=self.configuration_file, branch=branch
+        )
+        if widgets is None:
+            return False
+        self.config_widgets = widgets
+        self.selectors.children = tuple(widgets.values())
+        changed = old_catalog != self.catalog
+        if changed:
+            self.refresh_resource_choices(preserve=bool(old_catalog))
+        for widget in old_widgets.values():
+            widget.close()
+        options = list(
+            dict.fromkeys([*available_config_branches(include_remote=True), branch])
+        )
+        self.config_branch_widget.unobserve(self.on_config_branch_change, names="value")
+        self.config_branch_widget.options = options
+        self.config_branch_widget.value = branch
+        self.config_branch_widget.observe(self.on_config_branch_change, names="value")
+        lost_choice = (
+            not old_computers <= set(self.computer_selection.value)
+            or not old_codes <= set(self.code_selection.value)
+            or any(
+                key not in widgets or widgets[key].value != value
+                for key, value in old_values.items()
+            )
+            or any(
+                key not in self.account_widgets
+                or self.account_widgets[key].value != value
+                for key, value in old_accounts.items()
+            )
+        )
+        if changed and lost_choice:
+            self.update_message.value = "Configuration refreshed. Some previous choices are no longer available; review your selections and inspect again."
+            return False
+        return True
+
     def check_for_all_updates(self, _):
         self.invalidate_plan()
-        status_ok, msg, self.config = get_config(
-            config_widgets=self.config_widgets,
-            branch=self.config_branch_widget.value,
-        )
+        self.config = {}
+        if not self.synchronize_for_inspection():
+            return
+        if any(
+            widget.value == "select"
+            for key, widget in self.account_widgets.items()
+            if key in self.computer_selection.value
+        ):
+            self.update_message.value = (
+                "Select an account for each chosen remote computer."
+            )
+            return
+        status_ok, msg, self.config = get_config(**self.config_arguments())
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         if not status_ok:
             self.update_message.value = f"<b>{timestamp}</b>: {msg}"
             return
-        config_details = self.config_details_html()
-        ssh_key_updated = key_is_valid(
-            public_key_file=self.config["variables"]["ssh_public_key"]
+        # A local-only deactivation plan needs no CSCS certificate.
+        remote_selected = any(
+            self.config["computers"][key]["setup"]["transport"] != "core.local"
+            for key in self.computer_selection.value
         )
-        if not ssh_key_updated:
+        if remote_selected and not key_is_valid(
+            public_key_file=self.config.get("variables", {}).get("ssh_public_key", "")
+        ):
+            if self.connection_help.children:
+                self.connection_help.selected_index = 0
             self.update_message.value = (
-                f"<b>{timestamp}</b>: {config_details}"
-                "❌ SSH key is not valid, please update it"
+                "❌ Missing or expired CSCS SSH certificate. Install or open MFA CSCS, "
+                "refresh or renew it, then inspect again. See the SSH connection help section."
             )
             return
-        if msg == "":
-            msg, self.updates_needed = check_for_updates(
-                self.config, self.config_widgets["grant"].value
-            )
-        msg = remove_green_check_lines(msg)
-        if not msg:
-            self.update_message.value = (
-                f"<b>{timestamp}</b>: {config_details}✅ Nothing to report"
-            )
-        else:
-            self.update_message.value = (
-                f"<b>{timestamp}</b>: {config_details}{remove_green_check_lines(msg)}"
-            )
-
-        _, msg = get_old_unfinished_workchains()
-        self.update_old_workchains.value = f"<b>Old WorkChains Check:</b> {msg}"
-        somerunning, msg = get_old_unfinished_workchains(cutoffdays=3, reverse=True)
-        if somerunning:
-            self.running_workchains.value = (
-                f"<b>There are running workchains, you cannot update:</b> {msg}"
-            )
-        else:
-            self.start_button.disabled = not bool(self.updates_needed)
+        msg, self.updates_needed = check_for_updates(
+            self.config, self.selected_grant(), **self.selection_arguments()
+        )
+        self.show_unmanaged_choices()
+        self.update_message.value = (
+            f"<b>{timestamp}</b>: {self.config_details_html()}{msg}"
+        )
+        # Check only affected resources, including long-lived or paused users.
+        running, detail = unfinished_processes_for_computers(
+            self.affected_computer_labels()
+        )
+        self.running_workchains.value = (
+            f"<b>Selected resources have unfinished processes; finish or review them before applying:</b> {detail}"
+            if running
+            else ""
+        )
+        actions = any(
+            self.updates_needed.get(key)
+            for key in ("computers", "codes", "ssh_config", "tasks")
+        )
+        self.start_button.disabled = (
+            running or not actions or bool(self.updates_needed.get("blocked"))
+        )
 
     def clear_output(self, _):
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -283,59 +622,85 @@ class ConfigAiiDAlabApp(ipw.VBox):
 
     def _apply_configuration(self):
         self.output.clear_output()
-
-        self.subtitle.value = "<h3>Setup SSH config file. Check SSH connection.</h3>"
+        if not inspected_revision_is_current(self.config):
+            self.update_message.value = "The local configuration revision changed. Inspect again before applying."
+            return
+        # Reinspect immediately to reject stale resource choices and new running work.
+        msg, fresh = check_for_updates(
+            self.config, self.selected_grant(), **self.selection_arguments()
+        )
+        running, _ = unfinished_processes_for_computers(self.affected_computer_labels())
+        if (
+            not fresh
+            or "selection" not in fresh
+            or running
+            or fresh != self.updates_needed
+            or fresh.get("blocked")
+        ):
+            self.update_message.value = "Configuration changed or work is unfinished. Inspect again before applying."
+            return
+        chosen = fresh.get("selection", {})
+        computers = chosen.get("computers", [])
+        self.subtitle.value = "<h3>Check SSH and selected runtimes</h3>"
         with self.output:
-            if "ssh_config" in self.updates_needed:
-                update_ssh_config(
-                    config_path,
-                    self.config["ssh_config"],
-                    rename=self.updates_needed["ssh_config"]["rename"],
-                )
+            if computers:
+                remote_computers = [
+                    key
+                    for key in computers
+                    if self.config["computers"][key]["setup"]["transport"]
+                    != "core.local"
+                ]
+                ssh_settings = selected_ssh_config(self.config, remote_computers)
+                if ssh_settings:
+                    update_ssh_config(config_path, ssh_settings)
                 if not set_ssh(
                     self.config["computers"],
-                    self.updates_needed["ssh_config"]["hosts"],
+                    computers,
+                    self.config.get("connection_guides", {}),
                 ):
-                    print("❌ ssh problem, ask for support")
+                    self.update_message.value = "❌ SSH check failed. Follow the diagnostic above and inspect again."
                     return
-            print("✅ ssh setup done")
-
-        self.subtitle.value = "<h3>Setup computers</h3>"
-        with self.output:
-            print("🔄 Setting up computers")
-            status = setup_computers(
-                self.updates_needed.get("computers", {}), self.config["computers"]
+            requirements = code_runtimes(self.config, chosen.get("codes", []))
+            images = list(
+                dict.fromkeys(
+                    (item["host"], item["image"], item["view"], None)
+                    for item in requirements
+                    if item["image"]
+                )
             )
-            if not status:
+            if images and not manage_uenv_images(images):
+                self.update_message.value = "❌ uenv mount check failed before installation. See diagnostics and inspect again."
                 return
-            print("✅ Done")
-
-        self.subtitle.value = "<h3>Setup Codes and Uenvs. It will take several minutes</h3>"
-        with self.output:
-            print("🔄 Setting up codes")
-            status, uenvs = setup_codes(
-                self.updates_needed.get("codes", {}), self.config
-            )
-            if not status:
+            if not execute_setup_tasks(fresh.get("tasks", []), self.config):
+                self.update_message.value = "❌ Supporting-file installation failed. Inspect again after resolving it."
                 return
-            if len(uenvs) > 0:
-                uenvs_ok = manage_uenv_images(uenvs)
-                if not uenvs_ok:
-                    print("❌ uenvs not set up correctly ask for help")
-                    return
-            print("✅ Done")
-        self.subtitle.value = "<h3>Additional commands</h3>"
-        with self.output:
-            print("🔄 Executing final commands")
-            status_ok = execute_custom_commands(self.config)
-            if not status_ok:
-                print("❌ custom commands not set up correctly ask for help")
+            if not manage_uenv_images(requirements):
+                self.update_message.value = "❌ Runtime check failed. AiiDA registrations have not been changed. See diagnostics and inspect again."
                 return
-            print("✅ Done")
-        self.start_button.disabled = True
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        self.update_message.value = f"<b>{timestamp}</b>: ✅ Nothing to report"
-        return
+            if "setup_tasks" not in self.config and not execute_custom_commands(
+                self.config
+            ):
+                self.update_message.value = (
+                    "❌ Additional installation commands failed."
+                )
+                return
+            self.subtitle.value = "<h3>Register selected computers and codes</h3>"
+            if not setup_computers(
+                fresh.get("computers", {}), self.config["computers"]
+            ):
+                self.update_message.value = "❌ Computer setup failed. Inspect the current state before retrying."
+                return
+            ok, _ = setup_codes(fresh.get("codes", {}), self.config)
+            if not ok:
+                self.update_message.value = (
+                    "❌ Code setup failed. Inspect the current state before retrying."
+                )
+                return
+        self.update_message.value = (
+            "✅ Selected configuration applied and login-host runtime checks passed. "
+            "Run computer/code tests and a small scheduler job before production use."
+        )
+        self.subtitle.value = ""
 
 
 def get_start_widget(appbase, jupbase, notebase):
