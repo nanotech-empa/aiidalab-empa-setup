@@ -32,10 +32,16 @@ from .string_utils import normalize_text, relabel, to_camel_case
 
 
 def run_command(command, max_retries=5, verbose=False):
-    """
-    Run a shell command locally or over SSH, capturing output and handling errors.
-    Retries on 'Connection closed by remote host' errors.
-    """
+    """Return combined human diagnostics; structured consumers use capture."""
+    result = run_command_capture(command, max_retries=max_retries, verbose=verbose)
+    output = "\n".join(
+        part.strip() for part in (result.stdout, result.stderr) if part.strip()
+    )
+    return output, result.returncode == 0
+
+
+def run_command_capture(command, max_retries=5, verbose=False):
+    """Keep stdout/stderr separate while retaining strict SSH and retry policy."""
     command = list(command)
     if command and command[0] in {"ssh", "scp"}:
         command[1:1] = [
@@ -45,37 +51,31 @@ def run_command(command, max_retries=5, verbose=False):
         ]
     elif command and command[0] == "ssh-keyscan":
         command[1:1] = ["-T", "20"]
-    network = command and command[0] in {"ssh", "scp", "ssh-keyscan"}
+    network = bool(command and command[0] in {"ssh", "scp", "ssh-keyscan"})
     retries = max_retries if network else 1
-    attempts = 0
-
-    while attempts < retries:
-        output, success = "", False
+    for attempt in range(retries):
         try:
             result = subprocess.run(
                 command, check=True, capture_output=True, text=True,
                 stdin=subprocess.DEVNULL, timeout=3600 if network else 600,
             )
-            output, success = "\n".join(part.strip() for part in (result.stdout, result.stderr) if part.strip()), True
             if verbose:
                 print(f"✅ Command executed successfully: {command}")
-            return output, success
+            return result
         except (OSError, subprocess.TimeoutExpired) as error:
-            return str(error), False
-        except subprocess.CalledProcessError as e:
-            error_msg = "\n".join(part.strip() for part in (e.stdout, e.stderr) if part and part.strip())
+            return subprocess.CompletedProcess(command, 1, "", str(error))
+        except subprocess.CalledProcessError as error:
+            stdout, stderr = error.stdout or "", error.stderr or ""
+            diagnostic = "\n".join(part for part in (stdout, stderr) if part)
             if verbose:
-                print(f"❌ Error executing command: {error_msg}")
-            
-            if "Connection closed by remote host" in error_msg and attempts < retries - 1:
-                attempts += 1
-                if(verbose):
-                    print(f"🔄 Retrying in 5 seconds... (Attempt {attempts}/{retries})")
+                print(f"❌ Error executing command: {diagnostic}")
+            if "Connection closed by remote host" in diagnostic and attempt < retries - 1:
+                if verbose:
+                    print(f"🔄 Retrying in 5 seconds... (Attempt {attempt + 1}/{retries})")
                 time.sleep(5)
             else:
-                return error_msg, False  # Return error message and success=False
-
-    return "", False  # Should never reach this
+                return subprocess.CompletedProcess(command, error.returncode, stdout, stderr)
+    return subprocess.CompletedProcess(command, 1, "", "Command attempts exhausted.")
 
 def compare_computer_configuration(computer_name, repository_computer_data):
     """
@@ -260,6 +260,22 @@ def setup_aiida_computer(computer_name, config, hide=False, torelabel=False, ins
                 print(f"❌ Local transport configuration failed: {output}")
             return success
 
+        if setup["transport"] == "core.ssh_async":
+            command = [
+                "verdi", "computer", "configure", "core.ssh_async", computer_name,
+                "--host", ssh_config["host"],
+                "--backend", ssh_config["backend"],
+                "--safe-interval", str(ssh_config.get("safe_interval", 30.0)),
+                "--max-io-allowed", str(ssh_config.get("max_io_allowed", 8)),
+                "--authentication-script", "None",
+                "--use-login-shell" if ssh_config.get("use_login_shell", True) else "--no-use-login-shell",
+                "--non-interactive",
+            ]
+            output, success = run_command(command)
+            if not success:
+                print(f"❌ Asynchronous SSH configuration failed: {output}")
+            return success
+
         configure_command = [
             "verdi", "computer", "configure", setup["transport"], computer_name,
             "--username", ssh_config["username"],
@@ -354,7 +370,7 @@ def setup_aiida_code(code_name, code_config, hide=False, pktorelabel=False, inst
         print(f"✅ Successfully set up code '{code_name}'.")
     return True
         
-def check_ssh_config(config_path, config_from_yaml):
+def check_ssh_config(config_path, config_from_yaml, ssh_settings=None):
     config_file = config_path / "config"
     msg=""
     reconfigure=[]
@@ -373,7 +389,8 @@ def check_ssh_config(config_path, config_from_yaml):
         config = details.get("config", {})
 
         hostname = setup.get("hostname")
-        proxy_jump = config.get("proxy_jump", "")
+        route = (ssh_settings or {}).get(details.get("ssh_host", config.get("host")), config)
+        proxy_jump = route.get("proxy_jump", "")
         proxy_string = "Host " + proxy_jump if proxy_jump else ""
 
         # Check if hostname is in the config file
@@ -381,8 +398,8 @@ def check_ssh_config(config_path, config_from_yaml):
         if config_exist:
             hostname_check = hostname in config_content if hostname else False
             proxy_check = proxy_string in config_content if proxy_jump else True  # Skip if empty
-            if config.get("proxy_command"):
-                proxy_check = config["proxy_command"] in config_content
+            if route.get("proxy_command"):
+                proxy_check = route["proxy_command"] in config_content
             need_to_update = not (hostname_check and proxy_check)
 
         if need_to_update:
@@ -467,7 +484,7 @@ def set_ssh(config, hosts, connection_guides=None):
 
         if config[computer]["setup"].get("transport") == "core.local":
             continue
-        if config[computer]["config"].get("proxy_command"):
+        if config[computer]["config"].get("proxy_command") or config[computer]["setup"].get("transport") == "core.ssh_async":
             output, ok = run_command(["ssh", remotehost, "true"])
             if not ok:
                 print(ssh_failure_message(remotehost, output))

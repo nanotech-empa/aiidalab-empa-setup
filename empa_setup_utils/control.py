@@ -319,7 +319,7 @@ def process_aiida_configuration(
         for key, data in selected.items()
         if data["setup"].get("transport", "core.ssh") != "core.local"
     }
-    config_ok, msg, config_hosts = check_ssh_config(Path(config_path), remote_selected)
+    config_ok, msg, config_hosts = check_ssh_config(Path(config_path), remote_selected, config.get("ssh_config", {}))
     if not config_ok:
         plan["ssh_config"] = {"rename": True, "hosts": config_hosts}
     status, computer_msg, active_computers, inactive_computers = aiida_computers()

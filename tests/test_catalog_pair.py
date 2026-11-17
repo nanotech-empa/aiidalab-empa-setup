@@ -238,3 +238,112 @@ def test_qe_pp_python_workers_are_separate_from_native_banduppy(monkeypatch):
     )
     assert not any(name.startswith("local_qe_") for name in config["codes"])
     assert "local_qe75_runtime" not in config["setup_tasks"]
+
+
+def test_banduppy_actual_code_environment_is_headless(monkeypatch):
+    import os
+    import shlex
+    import subprocess
+    import sys
+
+    config = rendered(monkeypatch)
+    notebook = "module://matplotlib_inline.backend_inline"
+    monkeypatch.setenv("MPLBACKEND", notebook)
+    selected = config["codes"]["local_banduppy"]
+    command = (
+        selected["prepend_text"]
+        + "\n"
+        + shlex.join(
+            [
+                sys.executable,
+                "-c",
+                "import os; assert os.environ['MPLBACKEND']=='Agg'",
+            ]
+        )
+    )
+    subprocess.run(["/bin/bash", "-ec", command], check=True)
+    assert os.environ["MPLBACKEND"] == notebook
+    native = [
+        code
+        for code in config["codes"].values()
+        if code["default_calc_job_plugin"] == "nanotech_empa.qe_banduppy"
+    ]
+    assert len(native) == 4
+    assert all("export MPLBACKEND=Agg" in code["prepend_text"] for code in native)
+
+
+def test_critic2_source_tag_banner_and_receipt_qualify_together(monkeypatch, tmp_path):
+    import hashlib
+    import json
+
+    from empa_setup_utils import readiness
+
+    original = rendered(monkeypatch)["codes"]["local_critic2"]
+    source = json.loads(
+        (
+            Path(CATALOG).parent / "runtime-recipes/local-support-linux-aarch64.json"
+        ).read_text()
+    )
+    assert (
+        original["runtime_receipt"]["recipe_sha256"]
+        == hashlib.sha256(
+            (
+                Path(CATALOG).parent
+                / "runtime-recipes/local-support-linux-aarch64.json"
+            ).read_bytes()
+        ).hexdigest()
+    )
+    assert any(
+        "c478bcb530aaf783788c21c85ddedc719b3d16a2" in artifact["url"]
+        for artifact in source["artifacts"]
+    )
+    exe = tmp_path / "bin/critic2"
+    exe.parent.mkdir()
+    exe.write_text("#!/bin/sh\necho 'critic2 (development), version 1.4.339'\n")
+    exe.chmod(0o755)
+    receipt = {
+        "status": "INSTALLED_AND_CHECKED",
+        "prefix": str(tmp_path),
+        "recipe_sha256": original["runtime_receipt"]["recipe_sha256"],
+        "verified_files": {"bin/critic2": hashlib.sha256(exe.read_bytes()).hexdigest()},
+    }
+    path = tmp_path / "empa-runtime.json"
+    path.write_text(json.dumps(receipt))
+    code = {
+        **original,
+        "filepath_executable": str(exe),
+        "prepend_text": "",
+        "runtime_receipt": {**original["runtime_receipt"], "path": str(path)},
+        "runtime_checks": [
+            {
+                "arguments": [str(exe), "--version"],
+                "contains": "critic2 (development), version 1.4.339",
+            }
+        ],
+    }
+    request = {
+        "host": "localhost",
+        "transport": "core.local",
+        "image": None,
+        "view": None,
+        "executable": str(exe),
+        "code_key": "critic2",
+        "checks": code["runtime_checks"],
+        "code_config": code,
+    }
+    assert readiness.manage_uenv_images([request])
+    receipt["recipe_sha256"] = "0" * 64
+    path.write_text(json.dumps(receipt))
+    assert not readiness.manage_uenv_images([request])
+
+
+def test_tigu_transport_uses_supported_openssh_without_paramiko_pin(monkeypatch):
+    config = rendered(monkeypatch)
+    for key in ("tigu", "tigu-modules"):
+        computer = config["computers"][key]
+        assert computer["setup"]["transport"] == "core.ssh_async"
+        assert computer["config"]["host"] == "tigu"
+        assert computer["config"]["backend"] == "openssh"
+    assert (
+        "-oStrictHostKeyChecking=yes" in config["ssh_config"]["tigu"]["proxy_command"]
+    )

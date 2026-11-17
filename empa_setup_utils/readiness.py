@@ -7,15 +7,16 @@ import shlex
 import struct
 from pathlib import Path
 
-from .aiida_and_ssh_utils import run_command
+from .aiida_and_ssh_utils import run_command, run_command_capture
 from .runtime_metadata import verified_code_metadata, verified_remote_provider
 
 UENV_GUIDE = "https://docs.cscs.ch/software/uenv/management/#migration-to-ritom"
 
 
-def remote_command(host, arguments):
+def remote_command(host, arguments, *, capture=False):
     # OpenSSH joins its remaining arguments into a shell command on the remote.
-    return run_command(["ssh", host, shlex.join(arguments)])
+    command = ["ssh", host, shlex.join(arguments)]
+    return run_command_capture(command) if capture else run_command(command)
 
 
 def code_runtimes(config, code_keys):
@@ -181,11 +182,25 @@ def manage_uenv_images(requirements):
         else:
             launch = []
 
-        def probe(arguments, host=host, local=local, prepend=prepend, launch=launch):
+        def probe(
+            arguments,
+            host=host,
+            local=local,
+            prepend=prepend,
+            launch=launch,
+            *,
+            capture=False,
+        ):
             # Slurm activates the uenv/view before running the Code prepend text.
             body = prepend + "\n" + shlex.join(arguments)
             args = [*launch, "/bin/bash", "-ec", body]
-            return run_command(args) if local else remote_command(host, args)
+            if local:
+                return run_command_capture(args) if capture else run_command(args)
+            return (
+                remote_command(host, args, capture=True)
+                if capture
+                else remote_command(host, args)
+            )
 
         if executable:
             output, ok = probe(["test", "-x", executable])
@@ -207,7 +222,13 @@ def manage_uenv_images(requirements):
             if manifest_spec:
                 checks.append({"arguments": [executable, "manifest"], "manifest": True})
             for check in checks:
-                output, ok = probe(check["arguments"])
+                if check.get("manifest"):
+                    result = probe(check["arguments"], capture=True)
+                    output, ok = result.stdout, result.returncode == 0
+                    if result.stderr:
+                        print(f"Worker probe stderr: {result.stderr.rstrip()}")
+                else:
+                    output, ok = probe(check["arguments"])
                 if (
                     not ok
                     or check.get("contains", "") not in output
@@ -224,7 +245,9 @@ def manage_uenv_images(requirements):
                         print("❌ Worker did not emit a valid JSON manifest.")
                         return False
                     if (
-                        manifest.get("source_sha256") != manifest_spec["source_sha256"]
+                        not isinstance(manifest, dict)
+                        or manifest.get("source_sha256")
+                        != manifest_spec["source_sha256"]
                         or manifest.get("protocol") != "quantum-energy/v1"
                     ):
                         print(

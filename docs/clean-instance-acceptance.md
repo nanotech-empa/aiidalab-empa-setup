@@ -50,6 +50,12 @@ scientific implementation; retain that route's independent acceptance status.
 Phonopy and app-owned Python helpers require their supplying plugins/apps and
 console commands; an absent command must be diagnosed before registration.
 
+The official QE v26.11.0 CLI currently needs explicit `--computer localhost`
+when invoked for local installation/registration; without it the CLI passes
+`None`, despite the underlying setup function's localhost default. Use that
+supported explicit option while the focused upstream CLI correction awaits
+review/release. Do not add a duplicate local QE task to the EMPA catalog.
+
 ## Failure, reuse and preservation
 
 - Try an absent executable/plugin, wrong architecture, corrupted artifact and
