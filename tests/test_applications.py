@@ -5,6 +5,7 @@ import os
 from copy import deepcopy
 from importlib import metadata
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from packaging.utils import canonicalize_name
@@ -16,6 +17,27 @@ from empa_setup_utils.selection import installation_tasks, select_resources
 
 CATALOG = os.environ.get("EMPA_SETUP_CATALOG")
 pytestmark = pytest.mark.skipif(not CATALOG, reason="Supply the paired catalog")
+
+
+@pytest.mark.parametrize("paused", [False, True])
+def test_paused_banner_reflects_the_actual_boolean_without_process_control(
+    monkeypatch, paused
+):
+    target = SimpleNamespace(paused_workchains=start.ipw.HTML(value="old message"))
+    monkeypatch.setattr(
+        start,
+        "get_old_unfinished_workchains",
+        lambda **kw: (
+            paused,
+            "Paused process" if paused else "No old unfinished WorkChainNodes found.",
+        ),
+    )
+    found, _ = start.ConfigAiiDAlabApp.check_paused_workchains(target)
+    assert found is paused
+    if paused:
+        assert "There are paused workchains" in target.paused_workchains.value
+    else:
+        assert target.paused_workchains.value == ""
 
 
 @pytest.fixture

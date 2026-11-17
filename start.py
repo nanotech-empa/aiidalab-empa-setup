@@ -267,10 +267,12 @@ class ConfigAiiDAlabApp(ipw.VBox):
         some_paused, msg = get_old_unfinished_workchains(
             cutoffdays=4, reverse=True, paused=True
         )
-        if msg != "":
+        if some_paused and msg:
             self.paused_workchains.value = (
                 f"<b>{timestamp}</b>: There are paused workchains: {msg}"
             )
+        else:
+            self.paused_workchains.value = ""
         return some_paused, msg
 
     def config_details_html(self):
