@@ -26,7 +26,14 @@ def cached_app(tmp_path, monkeypatch):
             "other": {"computer": "beta", "label": "other"},
         },
         "setup_tasks": {},
+        "applications": {
+            "fixture": {"title": "Fixture app", "app_ids": ["fixture"], "codes": ["first"]}
+        },
     }
+    apps = tmp_path / "apps"
+    (apps / "fixture").mkdir(parents=True)
+    (apps / "fixture/start.py").write_text("# Installed fixture app; never executed\n")
+    monkeypatch.setattr("aiidalab.config.AIIDALAB_APPS", str(apps))
     path.write_text(yaml.safe_dump(data))
     monkeypatch.delenv("KUBERNETES_SERVICE_HOST", raising=False)
     monkeypatch.setattr(
@@ -75,7 +82,7 @@ def test_other_resources_are_not_described_as_unsupported(cached_app):
     assert set(widget.deactivate_codes) == {"custom@localhost"}
     assert not widget.deactivate_codes["custom@localhost"].value
     heading = widget.unmanaged_choices.children[0].value
-    assert "not managed by this setup" in heading
+    assert "outside this app configuration" in heading
     assert "not supported" not in heading
 
 
@@ -302,6 +309,7 @@ def test_tigu_preparation_selects_ela_key_and_invalidates_plan(cached_app):
     path.write_text(yaml.safe_dump(data))
     widget.config_widgets = widget.widgets_from_yaml(file_path=path)
     widget.refresh_resource_choices()
+    widget.computer_selection.value = ("beta",)
     preparation = widget.connection_help.children[0].children[1]
     widget.updates_needed = {"computers": {"beta": {"install": True}}}
     widget.start_button.disabled = False

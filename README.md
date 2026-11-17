@@ -71,19 +71,46 @@ test unreleased configuration changes.
 Most decision logic lives in `empa_setup_utils/control.py`; direct AiiDA,
 SSH, and shell command helpers live in `empa_setup_utils/aiida_and_ssh_utils.py`.
 
-## Selective setup and deployment profiles
+## App-aware setup
 
-Choose **CSCS Kubernetes** for remote compute codes, or **Personal Docker** for
-optional codes inside the Linux container on a personal computer. The detected
-container architecture is displayed; ARM64 native runtimes are offered only on
-ARM64. `mac-localhost` is the catalog key for AiiDA's `localhost` Computer.
-PythTB remains an app Python dependency and needs no executable Code.
+Install the scientific apps you want to use, then open this setup app. It detects
+actual app entry points and installed QE property plugins; backend packages alone
+do not select an app. Choose **Localhost**, **Tigu** and/or **Daint**, and the needed
+accounts. **Inspect updates** shows a plan for those apps; **Apply updates** runs
+only their supporting recipes, verifies them and registers their required Codes.
+There is no manual Code selector or runtime-path form. Docker/Kubernetes is
+detected automatically. Existing complete runtimes are checked and reused.
 
-Select computers, their individual accounts, and any subset of codes before
-inspection. Unselected resources are kept. Codes/computers absent from the YAML
-appear in a keep/deactivate list with **Keep** as the default. Updating an existing
-Computer definition is also opt-in; replacement is blocked when it would affect
-kept codes. No scientific nodes are deleted.
+Tigu appears once, using the maintained module route. Shared native modules and
+the existing personal-module fallback use the same reviewed recipes. The old
+Tigu and Eiger definitions remain retained in the catalog/profile for historical
+calculations, but are not additional targets in the normal interface.
+
+The catalog explicitly maps each supported app to its Code keys. Shared helpers
+are deduplicated. QE-PP retains its PythonJob worker; PythTB has a Tigu native
+route and runs through its Python dependency on localhost. The official QE app
+owns local QE installation/registration. Existing local QE Codes are preserved;
+missing ones produce optional QE-app setup guidance, never a second QE installer.
+No ORCA executable, Gaussian or PythTB is installed on Daint; Gaussian is Tigu-only.
+
+Unexpected registrations are listed separately with **Keep** as the default.
+Check a Code to hide it; renaming is done only when its label must be freed for
+a required replacement. Incompatible existing registrations cannot be retired
+without that explicit choice. UUIDs, provenance links and scientific records are
+retained. Computer replacement remains opt-in and is blocked if it would affect
+kept Codes. A changed app set or catalog invalidates the reviewed plan.
+
+For a new local ORCA installation, supply your licensed reviewed vendor archive
+through **Files → Work**, then inspect again. The app finds the exact archive by
+checksum; it never downloads or distributes ORCA. Technical recipe paths remain
+catalog-owned. CPU/memory limits and the meaningful Tigu username remain user
+settings. **Configuration source** is available in a collapsed section for preview
+review; opening the app uses the cached branch without fetching.
+
+Schema5 introduces this app-owned requirement mapping and single-target UI.
+Older setup consumers refuse schema5 before Apply. Install the matching setup
+and catalog together. The lower-level explicit selection API remains available
+for maintainers and isolated tests; it is not a normal user-facing Code selector.
 
 Schema 2 adds configuration includes and `setup_tasks` scoped to computers/codes.
 Partial setup refuses ambiguous legacy command bundles. Apply checks selected
@@ -94,8 +121,9 @@ Remote permissions and uenv repository locations are never repaired automaticall
 See the [personal Docker recreation runbook](docs/recreate-personal-docker.md),
 [clean-instance acceptance plan](docs/clean-instance-acceptance.md), and the
 companion [runtime catalog and prerequisites](https://github.com/nanotech-empa/aiidalab-alps-files/blob/feature/setup-readiness-checks/docs/runtime-installation.md).
-Quantum-worker updates/new deployments are deferred; preserve their existing
-versioned Codes and runtime prefixes.
+The selected modern quantum worker remains included for the ORCA app. Older
+experimental/research-worker changes remain deferred; preserve their original
+versioned Codes, checkpoints and runtime prefixes.
 
 ## License
 

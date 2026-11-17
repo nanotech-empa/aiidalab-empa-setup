@@ -20,6 +20,8 @@ def inspect_external_codes(
         for data in config.get("codes", {}).values()
     }
     for key, spec in config.get("external_code_providers", {}).items():
+        if config.get('_automatic_codes') and not set(spec.get('applications', [])) & config['_installed_applications'].keys():
+            continue
         computer_key = spec["computer"]
         computer = config["computers"][computer_key]["setup"]
         if computer.get("transport") != "core.local":
@@ -68,11 +70,21 @@ def inspect_external_codes(
     return reports, protected
 
 
-def external_codes_html(reports):
+def external_codes_html(reports, compact=False):
     """Explain provider ownership and optional next steps in the inspected plan."""
     sections = []
     for report in reports.values():
         text = f"<b>{escape(report['title'])}</b><br>"
+        if compact:
+            if report['present']:
+                text += f"{len(report['present'])} existing registrations kept unchanged.<br>"
+            if report['unavailable']:
+                text += f"{len(report['unavailable'])} hidden/disabled registrations kept; not counted as available.<br>"
+            if report['missing']:
+                text += f"{len(report['missing'])} local registrations missing. {escape(report['guidance'])} "
+                text += f'<a href="{escape(report["url"], quote=True)}" target="_blank" rel="noopener noreferrer">App instructions</a>.<br>'
+            sections.append(text)
+            continue
         if report["present"]:
             text += (
                 "Existing Code registrations, kept unchanged: "

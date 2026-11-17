@@ -18,6 +18,7 @@ from empa_setup_utils.aiida_and_ssh_utils import (
     unfinished_processes_for_computers,
     update_ssh_config,
 )
+from empa_setup_utils.applications import codes_for_applications, discover_applications
 from empa_setup_utils.configuration import load_config_bundle
 from empa_setup_utils.connection_help import connection_guide, connection_help_html
 from empa_setup_utils.control import (
@@ -35,6 +36,7 @@ from empa_setup_utils.repo_utils import (
     BRANCH,
     available_config_branches,
     configuration_file,
+    get_current_branch,
 )
 from empa_setup_utils.selection import selected_ssh_config
 from empa_setup_utils.ssh_onboarding import TiguKeyPreparation
@@ -66,6 +68,12 @@ class ConfigAiiDAlabApp(ipw.VBox):
         self.catalog = {}
         self.config = {}
         self.updates_needed = {}
+        self.installed_applications = {}
+        self.applications_summary = ipw.HTML()
+        self.computer_choices = ipw.VBox()
+        self.computer_checkboxes = {}
+        self._updating_computer_choices = False
+        self.requirements_error = ""
         self.deployment = ipw.Dropdown(
             description="Deployment",
             options=[("CSCS Kubernetes", "hosted"), ("Personal Docker", "personal")],
@@ -116,14 +124,19 @@ class ConfigAiiDAlabApp(ipw.VBox):
                 self.code_selection, "value", tuple(self.code_selection.options)
             )
         )
+        branches = available_config_branches()
+        cached_branch = get_current_branch()
         self.config_branch_widget = ipw.Dropdown(
             description="Config branch",
-            options=available_config_branches(),
-            value=BRANCH,
+            options=branches,
+            value=cached_branch if cached_branch in branches else BRANCH,
             style={"description_width": "110px"},
             layout=ipw.Layout(width="430px"),
         )
         self.config_branch_widget.observe(self.on_config_branch_change, names="value")
+        self.source_options = ipw.Accordion(children=[self.config_branch_widget])
+        self.source_options.set_title(0, "Configuration source")
+        self.source_options.selected_index = None
 
         self.check_button = ipw.Button(
             description="Inspect updates", button_style="info"
@@ -156,7 +169,7 @@ class ConfigAiiDAlabApp(ipw.VBox):
         self.play_button.disabled = not some_paused_calculations
 
         controls = ipw.HBox(
-            [self.check_button, self.start_button, self.play_button, self.clear_button]
+            [self.check_button, self.start_button, self.clear_button]
         )
         self.selectors = (
             ipw.HBox(list(self.config_widgets.values()))
@@ -172,26 +185,16 @@ class ConfigAiiDAlabApp(ipw.VBox):
                 self.running_workchains,
                 self.paused_workchains,
                 self.update_message,
-                self.config_branch_widget,
-                self.deployment,
-                ipw.HTML(
-                    f"Container architecture: <b>{platform.machine()}</b>. Local codes run inside this Linux container."
-                ),
+                self.source_options,
+                self.applications_summary,
                 self.selectors,
                 ipw.HTML(
-                    "<b>Choose what to configure</b><br>Select one or more entries (Cmd/Ctrl-click). Unselected resources are kept."
+                    "<b>Where will you run your apps?</b><br>Required codes are selected automatically from installed apps. Unselected computers and existing calculations are kept."
                 ),
-                self.computer_selection,
-                self.all_computers_button,
+                self.computer_choices,
                 self.account_selectors,
                 self.connection_help,
                 self.update_computer_definitions,
-                self.install_local_runtimes,
-                ipw.HTML(
-                    "For a new personal instance, install the corresponding apps first, select only localhost, and set CPU/memory to the container allocation. Uncheck runtime installation to use existing programs. Licensed ORCA needs your archive."
-                ),
-                self.code_selection,
-                self.all_codes_button,
                 self.runtime_setting_box,
                 self.unmanaged_choices,
                 controls,
@@ -200,6 +203,7 @@ class ConfigAiiDAlabApp(ipw.VBox):
             ]
         )
         self.add_class("empa-setup")
+        self.selectors.layout.display = "" if self._remote_selected() else "none"
 
     async def _start_periodic_check_old_workchains(self, interval):
         """Periodically check for pending too old workchains."""
@@ -300,7 +304,7 @@ class ConfigAiiDAlabApp(ipw.VBox):
 
     def on_context_change(self, _):
         self.invalidate_plan()
-        self.refresh_resource_choices()
+        self.refresh_resource_choices(preserve=True)
         self.deactivate_computers = {}
         self.deactivate_codes = {}
         self.unmanaged_choices.children = ()
@@ -322,6 +326,7 @@ class ConfigAiiDAlabApp(ipw.VBox):
             key
             for key, data in self.catalog.get("computers", {}).items()
             if self.deployment.value in data.get("deployments", ["hosted", "personal"])
+            and data.get("user_visible", True)
             and (not grant_widget or grant_widget.value in data.get("grants", []))
         )
         self.account_widgets = {}
@@ -330,7 +335,7 @@ class ConfigAiiDAlabApp(ipw.VBox):
                 grants = self.catalog["computers"][key].get("grants", [])
                 if grants:
                     widget = ipw.Dropdown(
-                        description=f"{key} account",
+                        description=f"{self.catalog['computers'][key].get('display_name', key)} account",
                         options=grants if len(grants) == 1 else ["select", *grants],
                         style={"description_width": "160px"},
                         layout=ipw.Layout(width="390px"),
@@ -344,11 +349,13 @@ class ConfigAiiDAlabApp(ipw.VBox):
         self.computer_selection.value = (
             tuple(key for key in previous_computers if key in eligible)
             if preserve
-            else eligible
+            else tuple(key for key in eligible if self.catalog['computers'][key]['setup'].get('transport') == 'core.local')
         )
         self.computer_selection.observe(self.on_computers_change, names="value")
+        self._build_computer_choices(eligible)
+        self.refresh_applications()
         self.on_computers_change(None)
-        if preserve:
+        if preserve and not self.catalog.get("applications"):
             self.code_selection.value = tuple(
                 key for key in previous_codes if key in self.code_selection.options
             )
@@ -367,11 +374,51 @@ class ConfigAiiDAlabApp(ipw.VBox):
                 style={"description_width": "210px"},
                 layout=ipw.Layout(width="95%"),
             )
+            if key == 'tigu_empa_username':
+                if widget.value == '{cscsuser}':
+                    widget.value = ''
+                widget.placeholder = 'Same as CSCS username'
             widget.observe(self.invalidate_plan, names="value")
             self.runtime_settings[key] = widget
-            settings.append(widget)
+            if spec.get("user_input"):
+                widget.layout.display = "" if not spec.get("computers") or set(spec["computers"]) & set(self.computer_selection.value) else "none"
+                settings.append(widget)
         self.runtime_setting_box.children = tuple(settings)
         self.refresh_connection_help()
+
+    def _remote_selected(self):
+        return any(self.catalog["computers"][key]["setup"].get("transport", "core.ssh") != "core.local"
+                   for key in self.computer_selection.value)
+
+    def _build_computer_choices(self, eligible):
+        previous = self.computer_checkboxes
+        self.computer_checkboxes = {}
+        for key in eligible:
+            widget = ipw.Checkbox(
+                description=self.catalog["computers"][key].get("display_name", key),
+                value=key in self.computer_selection.value, indent=False,
+                layout=ipw.Layout(width="100%"),
+            )
+            widget.observe(self._computer_choice_changed, names="value")
+            self.computer_checkboxes[key] = widget
+        self.computer_choices.children = tuple(self.computer_checkboxes.values())
+        for widget in previous.values():
+            widget.close()
+
+    def _computer_choice_changed(self, _):
+        if not self._updating_computer_choices:
+            self.computer_selection.value = tuple(key for key, widget in self.computer_checkboxes.items() if widget.value)
+
+    def refresh_applications(self):
+        self.installed_applications = discover_applications(self.catalog)
+        titles = [escape(data["title"]) for data in self.installed_applications.values()]
+        self.applications_summary.value = (
+            "<b>Installed apps:</b> " + ", ".join(titles) + ".<br>Software requirements are managed automatically."
+            if titles else
+            "<b>No supported scientific apps detected.</b><br>Install the apps you want to use; their code requirements will then be included automatically."
+        )
+        if 'orca' in self.installed_applications:
+            self.applications_summary.value += '<br>Local ORCA requires your licensed vendor archive. If not already installed, upload the archive with <a href="/tree/work" target="_blank" rel="noopener">Files → Work</a>, then inspect again.'
 
     def on_computers_change(self, _):
         self.invalidate_plan()
@@ -384,11 +431,29 @@ class ConfigAiiDAlabApp(ipw.VBox):
             and platform.machine() in data.get("architectures", [platform.machine()])
         )
         self.code_selection.options = options
-        self.code_selection.value = options
+        self.requirements_error = ""
+        try:
+            required = codes_for_applications(self.catalog, self.installed_applications, self.computer_selection.value) if self.catalog.get("applications") else set(options)
+        except ValueError as error:
+            self.requirements_error = str(error)
+            required = set()
+            self.update_message.value = "Cannot prepare app requirements: " + escape(str(error))
+        self.code_selection.value = tuple(key for key in options if key in required)
+        self._updating_computer_choices = True
+        try:
+            for key, widget in self.computer_checkboxes.items():
+                widget.value = key in self.computer_selection.value
+        finally:
+            self._updating_computer_choices = False
+        if hasattr(self, "selectors"):
+            self.selectors.layout.display = "" if self._remote_selected() else "none"
+        for key, widget in self.runtime_settings.items():
+            spec = self.catalog.get("runtime_settings", {}).get(key, {})
+            widget.layout.display = "" if not spec.get("computers") or set(spec["computers"]) & set(self.computer_selection.value) else "none"
         self.account_selectors.children = tuple(
             widget
             for key, widget in self.account_widgets.items()
-            if key in self.computer_selection.value
+            if key in self.computer_selection.value and len(widget.options) > 1
         )
 
     def refresh_connection_help(self):
@@ -440,7 +505,7 @@ class ConfigAiiDAlabApp(ipw.VBox):
 
     def tigu_username(self):
         widget = self.runtime_settings.get("tigu_empa_username")
-        return (widget.value if widget else "{cscsuser}").replace(
+        return (widget.value if widget and widget.value else "{cscsuser}").replace(
             "{cscsuser}", self.cscs_username()
         )
 
@@ -454,6 +519,7 @@ class ConfigAiiDAlabApp(ipw.VBox):
             "config_widgets": self.config_widgets,
             "branch": self.config_branch_widget.value,
             "deployment": self.deployment.value,
+            "automatic_codes": True,
             "install_local_runtimes": self.install_local_runtimes.value,
             "selected_computers": self.computer_selection.value,
             "computer_grants": {
@@ -463,6 +529,7 @@ class ConfigAiiDAlabApp(ipw.VBox):
             },
             "settings": {
                 key: widget.value for key, widget in self.runtime_settings.items()
+                if key != 'tigu_empa_username' or widget.value
             },
         }
 
@@ -509,12 +576,13 @@ class ConfigAiiDAlabApp(ipw.VBox):
             for label in unmanaged.get(section, []):
                 widget = choices.get(label) or ipw.Checkbox(
                     value=False,
-                    description=f"Deactivate {label}",
+                    description=(f"Hide and rename {label} for replacement" if label in self.updates_needed.get('replacements', {}) else f"Hide {label}"),
                     indent=False,
                     layout=ipw.Layout(width="100%"),
                 )
                 if label not in choices:
                     widget.observe(self.invalidate_plan, names="value")
+                widget.description = f"Hide and rename {label} for replacement" if label in self.updates_needed.get('replacements', {}) else f"Hide {label}"
                 current[label] = widget
                 rows.append(widget)
             choices.clear()
@@ -523,8 +591,8 @@ class ConfigAiiDAlabApp(ipw.VBox):
             rows.insert(
                 0,
                 ipw.HTML(
-                    "<b>Other codes/computers not managed by this setup. Keep them or deactivate?</b><br>"
-                    "Keep is the default. Check only those to deactivate, then inspect again. "
+                    "<b>Existing codes/computers outside this app configuration: keep or hide?</b><br>"
+                    "Keep is the default. Check only those to hide, then inspect again. "
                     "Disabling a computer prevents new use of all codes on it. "
                     "Existing calculation data is retained."
                 ),
@@ -589,6 +657,10 @@ class ConfigAiiDAlabApp(ipw.VBox):
         self.invalidate_plan()
         self.config = {}
         if not self.synchronize_for_inspection():
+            return
+        self.refresh_applications()
+        self.on_computers_change(None)
+        if self.requirements_error:
             return
         if any(
             widget.value == "select"
@@ -662,6 +734,9 @@ class ConfigAiiDAlabApp(ipw.VBox):
 
     def _apply_configuration(self):
         self.output.clear_output()
+        if self.config.get("_automatic_codes") and discover_applications(self.config) != self.config["_installed_applications"]:
+            self.update_message.value = "Installed apps changed. Inspect again before applying."
+            return
         if not inspected_revision_is_current(self.config):
             self.update_message.value = "The local configuration revision changed. Inspect again before applying."
             return
@@ -727,7 +802,9 @@ class ConfigAiiDAlabApp(ipw.VBox):
             running, detail = unfinished_processes_for_computers(
                 self.affected_computer_labels()
             )
-            if not inspected_revision_is_current(self.config) or running:
+            if not inspected_revision_is_current(self.config) or running or (
+                self.config.get("_automatic_codes") and discover_applications(self.config) != self.config["_installed_applications"]
+            ):
                 self.update_message.value = (
                     "Installation finished, but the configuration changed or affected work started. "
                     "Registrations have not changed; inspect again. " + escape(detail)

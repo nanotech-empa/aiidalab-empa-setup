@@ -3,6 +3,8 @@
 import platform
 from copy import deepcopy
 
+from .applications import codes_for_applications
+
 
 def select_resources(config, grant, computers=None, codes=None):
     """Validate explicit keys; None selects all eligible resources, [] selects none."""
@@ -16,6 +18,7 @@ def select_resources(config, grant, computers=None, codes=None):
         )
         and config.get("_deployment", "hosted")
         in data.get("deployments", ["hosted", "personal"])
+        and (not config.get("_automatic_codes") or data.get("user_visible", True))
     }
     computers = eligible if computers is None else set(computers)
     if not computers <= eligible:
@@ -25,7 +28,15 @@ def select_resources(config, grant, computers=None, codes=None):
         for key, data in config.get("codes", {}).items()
         if data["computer"] in computers
     }
-    codes = available_codes if codes is None else set(codes)
+    if config.get("_automatic_codes"):
+        automatic = codes_for_applications(
+            config, config["_installed_applications"], computers
+        )
+        if codes is not None and set(codes) != automatic:
+            raise ValueError("Installed apps or their code requirements changed. Inspect again.")
+        codes = automatic
+    else:
+        codes = available_codes if codes is None else set(codes)
     for key in codes:
         data = config.get("codes", {}).get(key, {})
         if platform.machine() not in data.get("architectures", [platform.machine()]):
@@ -69,12 +80,19 @@ def installation_tasks(config, computers, codes):
         return []
     tasks = []
     for name, task in config["setup_tasks"].items():
+        if config.get("_automatic_codes") and task.get("legacy_only"):
+            continue
         if task.get("local_runtime_installer") and not config.get("_install_local_runtimes", True):
             continue
         computer = task["computer"]
         if computer not in config.get("computers", {}):
             raise ValueError(f"Installation task {name} refers to an unknown computer.")
         task_codes = set(task.get("codes", []))
+        if config.get("_automatic_codes") and not task_codes:
+            if not task.get("computer_preparation"):
+                raise ValueError(f"Unscoped installation task {name}; update the application catalog.")
+            if not any(config["codes"][key]["computer"] == computer for key in codes):
+                continue
         if any(
             key not in config.get("codes", {})
             or config["codes"][key]["computer"] != computer

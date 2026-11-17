@@ -1,5 +1,34 @@
 # Set up a new personal AiiDAlab instance
 
+Install the intended scientific apps using AiiDAlab's app manager, then open
+**AiiDAlab Config App**. The setup detects their frontend installations and QE
+property plugins. Choose Localhost, Tigu and/or Daint and the required accounts;
+there is no Code or runtime-path selector. Localhost is Linux ARM64 inside Docker.
+Deployment type is detected automatically. Start with Localhost for this clean
+instance test, set its CPU/memory budget, then Inspect and review before Apply.
+
+Only the installed apps' required Codes and scoped supporting recipes are planned.
+Install another app and inspect again to add its requirements. Existing matching
+programs are verified and reused. Unexpected registrations default to Keep; hide
+only explicit choices, with renaming only to free a required replacement label.
+All scientific records and provenance remain. A changed app set, catalog revision
+or affected active calculation invalidates Apply.
+
+Local QE programs belong to the official Quantum ESPRESSO app. Install that app
+and complete its localhost code setup if wanted. EMPA setup preserves those Codes
+and does not patch the official app. QE-PP still requires PythonJob/Python Codes.
+For ORCA, upload the licensed vendor archive using Files → Work before inspection;
+the exact expected archive is recognized by checksum. ORCA is never downloaded
+or redistributed. Tigu is the single module-based target, including PythTB;
+Daint uses the maintained uenvs and excludes ORCA executables, Gaussian and PythTB.
+
+This app/controller/catalog pair remains a draft candidate until fresh-instance
+acceptance. Preserve previous source heads and the native/registration/scientific
+evidence separately. The maintained deployment/native recipes and administrator
+module instructions remain in the paired catalog; this UI does not change their
+scientific settings, versions, ABI identities or licensing requirements.
+
+
 Use a new official full-stack container with its own home, AiiDA profile,
 database, repository and broker. `localhost` means Linux inside that container,
 not macOS. The native recipes in this candidate target Linux ARM64 only.
@@ -61,34 +90,29 @@ review-held upstream patches are not hidden installation prerequisites.
 
 Until acceptance is complete, use the existing [nanotech-empa/aiidalab-empa-setup#14](https://github.com/nanotech-empa/aiidalab-empa-setup/pull/14) and configuration
 PR13 candidates together and record both complete commit hashes. The extended
-catalog is schema 4: older consumers reject it before Apply.
+catalog is schema 5: older consumers reject it before Apply.
 
-1. Open the setup app and click **Inspect updates** to obtain the configuration.
-2. Select the reviewed configuration branch, inspect again, then choose
-   **Personal Docker** and only **mac-localhost**. Leave remote accounts and
-   certificates unset.
-3. Begin with **local_pythonjob**. Inspect and Apply register the local Computer
-   and Code without SSH. The PythonJob plugin must already be installed.
-4. Set **Local MPI tasks/machine** and **Local memory [KiB]** to the container's
-   actual allocation. Existing computer replacement is opt-in; review the plan.
-5. Keep **Install selected localhost runtimes** enabled to test real installation.
-   Add BandUPpy, CP2K/SPM, QE, rendering, Block2 and Model runtimes separately.
-   Each family runs only its own selected tasks and uses a new versioned prefix.
-6. For ORCA, supply the licensed Linux ARM64 archive matching the catalog's
-   recorded checksum. The selected task validates it before installing MPI,
-   then extracts it and checks numeric-type support. No program archive is
-   downloaded or redistributed by the setup app.
+1. Install the intended scientific app through the ordinary AiiDAlab app manager.
+2. Open setup, select the reviewed catalog under Configuration source, and keep
+   Localhost selected. Deployment and code requirements are determined automatically.
+3. Inspect. Only that app's required programs/registrations may be planned; missing
+   backend plugins are reported, not replaced with fake Codes. No SSH is used locally.
+4. Set the local CPU/memory budget and review the plan. Existing computer replacement
+   is opt-in; unknown Codes default to Keep. Apply only after deliberate review.
+5. Verify real scoped installation, native checks and registration independently.
+   Add further apps and repeat Inspect; shared helpers must not be duplicated.
+6. For ORCA, upload your licensed matching Linux ARM64 archive using Files → Work.
+   Its checksum is verified before use; the archive is never downloaded/redistributed.
 
 The [runtime installation guide](https://github.com/nanotech-empa/aiidalab-alps-files/blob/feature/setup-readiness-checks/docs/runtime-installation.md)
-lists exact recipes, paths, prerequisites and verification limits. Paths are
-editable; the defaults are new-instance choices, not instructions to retarget
-existing provenance-linked Codes.
+lists exact recipes, internal paths, prerequisites and verification limits. Paths
+are catalog-owned; existing provenance-linked Codes are never silently retargeted.
 
 Installation output is streamed and retained in owned logs. Failed/interrupted
 prefixes remain for diagnosis and are not automatically upgraded or deleted.
-Review the failure, choose a new prefix where necessary, then inspect again.
-To use an already installed compatible runtime, uncheck runtime installation;
-executable, dependency and applicable receipt checks still precede registration.
+Review and diagnose a failure before retrying; never overwrite an incomplete or
+unowned prefix. Existing compatible runtimes still require executable, dependency
+and applicable receipt checks before registration.
 Unselected resources and custom registrations are kept by default.
 
 ## Qualify the installation

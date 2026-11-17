@@ -84,11 +84,11 @@ def test_existing_programs_mode_skips_only_local_installers(monkeypatch):
     )
 
 
-@pytest.mark.parametrize("old_schema", [2, 3])
+@pytest.mark.parametrize("old_schema", [2, 3, 4])
 def test_older_consumer_refuses_new_protocol_before_apply(monkeypatch, old_schema):
     monkeypatch.setattr(control, "SUPPORTED_SCHEMA_VERSION", old_schema)
     ok, message, config = control.get_config(file_path=CATALOG, deployment="personal")
-    assert not ok and f"schema {old_schema}" in message and "schema 4" in message
+    assert not ok and f"schema {old_schema}" in message and "schema 5" in message
     assert config == {}
 
 

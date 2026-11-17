@@ -70,7 +70,12 @@ def test_personal_configuration_creates_local_computer_and_code_without_ssh(
             }
         },
         "setup_tasks": {},
+        "applications": {"fixture": {"title": "Fixture", "app_ids": ["fixture"], "codes": ["true"]}},
     }
+    app_root = tmp_path / "apps"
+    (app_root / "fixture").mkdir(parents=True)
+    (app_root / "fixture/start.py").write_text("# Installed app fixture\n")
+    monkeypatch.setattr("aiidalab.config.AIIDALAB_APPS", str(app_root))
     path = tmp_path / "config.yml"
     path.write_text(yaml.safe_dump(config))
     monkeypatch.delenv("KUBERNETES_SERVICE_HOST", raising=False)

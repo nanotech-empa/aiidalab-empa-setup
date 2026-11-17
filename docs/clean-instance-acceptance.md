@@ -1,4 +1,22 @@
-# Clean-instance localhost acceptance
+# Clean-instance acceptance
+
+Use the matching schema5 setup/catalog pair. First test with no scientific app:
+no Code/runtime installer should be planned. Install one supported app, inspect
+again, and compare the automatically selected requirements to applications.yml.
+Then combine apps and verify shared helpers are selected once. A backend alone
+must not count as a frontend; a QE property plugin needs its installed QE host.
+
+Normal UI: Localhost/Tigu/Daint only, one Tigu account, no deployment, Code or
+runtime-path selector. Localhost is the default. Selecting a remote target reveals
+its account/SSH help; there is no SSH requirement for Localhost. Verify each app's
+supported target routes, including Tigu PythTB, QE-PP PythonJob and Daint exclusions.
+
+Unknown Codes default to Keep. Explicit hiding must retain records and links;
+label-conflicting replacements additionally require explicit hide/rename consent.
+Verify that adding/removing an app before or during Apply stops stale registration.
+Opening/selector changes never fetch or install. Inspect synchronizes only the
+chosen catalog; Apply uses exactly that reviewed revision.
+
 
 Test the setup/configuration candidate pair in a new independent Linux ARM64
 AiiDAlab container. Keep both PRs unmerged until this acceptance is assessed.
@@ -16,7 +34,7 @@ home, profile, database, repository, broker, secrets or old dirty source tree.
    must be displayed; old consumers must refuse it before any Apply.
 3. Opening setup reads the cache only. **Inspect updates** may obtain/synchronize
    the selected configuration; changing the branch alone must not fetch.
-4. Choose **Personal Docker**, only **mac-localhost**, and **local_pythonjob**.
+4. Install the QE app and QE-PP property plugin, then choose **Localhost**. The PythonJob requirement is detected automatically.
    Leave CSCS credentials unset. Inspect/Apply must use core.local/core.direct
    without SSH or remote installation tasks. Record the new Code/Computer UUIDs.
 5. Set the local MPI/memory values to the actual container budget. Verify the
@@ -26,7 +44,7 @@ home, profile, database, repository, broker, secrets or old dirty source tree.
 
 ## Real installation, one family at a time
 
-Leave **Install selected localhost runtimes** enabled. A preinstalled program
+Install the corresponding app before Inspect. A preinstalled program
 cannot stand in for this part. Record each recipe ID/hash, official artifact
 identities, prefix, logs and completed receipt. No task for another family or
 remote computer may run.

@@ -17,6 +17,7 @@ from .aiida_and_ssh_utils import (
     setup_aiida_computer,
 )
 from .configuration import load_config_bundle, resolve_variables
+from .applications import codes_for_applications, find_licensed_orca_archive, prepare_applications
 from .external_codes import external_codes_html, inspect_external_codes
 from .readiness import (
     manage_uenv_images as manage_uenv_images,  # public compatibility import
@@ -34,7 +35,7 @@ from .repo_utils import (
 )
 from .selection import installation_tasks, select_resources
 
-SUPPORTED_SCHEMA_VERSION = 4
+SUPPORTED_SCHEMA_VERSION = 5
 
 
 # Check repository of config files
@@ -96,6 +97,7 @@ def get_config(
     settings=None,
     selected_computers=None,
     install_local_runtimes=True,
+    automatic_codes=False,
 ):
     """Render the configuration already on disk without fetching or switching Git."""
     file_path = file_path or configuration_file
@@ -131,8 +133,14 @@ def get_config(
             {},
         )
 
-    variables = data.get("variables", {})
+    variables = data.setdefault("variables", {})
     variables.update(settings or {})
+    if automatic_codes:
+        try:
+            prepare_applications(data)
+            find_licensed_orca_archive(data)
+        except ValueError as error:
+            return False, f"❌ {escape(str(error))}", {}
     # Run scripts from the exact inspected bundle, never a stale global path.
     variables["config_files"] = str(Path(file_path).resolve().parent)
     if "timestamp" in variables and variables["timestamp"] == "now":
@@ -315,6 +323,12 @@ def process_aiida_configuration(
         "unmanaged": {"computers": [], "codes": {}},
         "blocked": [],
     }
+    if config.get("_automatic_codes"):
+        plan["applications"] = config["_installed_applications"]
+        if any(config["codes"][key].get("default_calc_job_plugin") == "orca.orca" and config["codes"][key]["computer"] == "mac-localhost" for key in codes):
+            variables = config.get("variables", {})
+            if not variables.get("local_orca_archive") and not Path(variables["local_orca_root"]).exists():
+                plan["blocked"].append("ORCA needs your licensed vendor archive. Upload it to Work using AiiDAlab Files, then inspect again.")
     remote_selected = {
         key: data
         for key, data in selected.items()
@@ -332,7 +346,7 @@ def process_aiida_configuration(
         config, active_codes, inactive_codes, active_computers, computers
     )
     plan["external_code_providers"] = providers
-    msg += external_codes_html(providers)
+    msg += external_codes_html(providers, compact=bool(config.get('_automatic_codes')))
 
     defined = config.get("computers", {})
     valid_computers = set(_configured_computer_labels(defined))
@@ -348,12 +362,43 @@ def process_aiida_configuration(
         f"{data['label']}@{defined[data['computer']]['setup']['label']}"
         for data in config.get("codes", {}).values()
     )
+    if config.get("_automatic_codes"):
+        # Codes belonging to apps that are no longer installed are unexpected,
+        # even if a definition still exists in the full multi-app catalog.
+        expected_keys = codes_for_applications(
+            config, config["_installed_applications"], set(defined)
+        )
+        valid_codes = set()
+        for key in expected_keys:
+            data = config['codes'][key]
+            labels = set(_configured_computer_labels({data['computer']: defined[data['computer']]}))
+            labels.add(defined[data['computer']]['setup']['label'])
+            valid_codes.update(f"{data['label']}@{label}" for label in labels)
     plan["unmanaged"]["computers"] = sorted(active_computers - valid_computers)
     plan["unmanaged"]["codes"] = {
         f"{label}@{computer}": pk
         for label, computer, pk in sorted(active_codes)
         if f"{label}@{computer}" not in valid_codes and pk not in external_pks
     }
+    comparisons = {}
+    computer_comparisons = {}
+    if config.get("_automatic_codes"):
+        plan["replacements"] = {}
+        for key in computers:
+            data = defined[key]
+            label = data['setup']['label']
+            if label in active_computers:
+                computer_comparisons[label] = compare_computer_configuration(label, data)
+        for key in sorted(codes):
+            data = config['codes'][key]
+            computer = defined[data['computer']]['setup']['label']
+            label = f"{data['label']}@{computer}"
+            active_pk = next((pk for name, comp, pk in active_codes if f"{name}@{comp}" == label), None)
+            if active_pk is not None:
+                comparisons[label] = compare_code_configuration(label, {**data, "computer": computer})
+                if not comparisons[label][0] or (update_computers and computer in computer_comparisons and not computer_comparisons[computer][0]):
+                    plan['unmanaged']['codes'][label] = active_pk
+                    plan['replacements'][label] = active_pk
     if not set(deactivate_computers) <= set(plan["unmanaged"]["computers"]):
         return False, "❌ The computer choices changed. Inspect again.<br>", {}
     if not set(deactivate_codes) <= set(plan["unmanaged"]["codes"]):
@@ -375,7 +420,7 @@ def process_aiida_configuration(
         data = defined[key]
         label = data["setup"]["label"]
         if label in active_computers:
-            equal, detail = compare_computer_configuration(label, data)
+            equal, detail = computer_comparisons.get(label) or compare_computer_configuration(label, data)
             msg += detail
             if equal:
                 continue
@@ -412,15 +457,16 @@ def process_aiida_configuration(
             plan.get("computers", {}).get(computer, {}).get("install", False)
         )
         if active_pk is not None and not replacing_computer:
-            equal, detail = compare_code_configuration(
-                label, {**data, "computer": computer}
-            )
+            equal, detail = comparisons.get(label) or compare_code_configuration(label, {**data, "computer": computer})
             msg += detail
             if equal:
                 _queue_update(
                     plan, "codes", label, code_key=key, checkuenv=True, install=False
                 )
                 continue
+        if config.get('_automatic_codes') and active_pk is not None and label not in deactivate_codes:
+            plan['blocked'].append(f"Keeping {label}. To replace this incompatible registration, select its Hide checkbox; it will be renamed only to free the required label. Existing calculation data is retained.")
+            continue
         _queue_update(
             plan,
             "codes",
@@ -449,14 +495,22 @@ def process_aiida_configuration(
                 )
     for section in ("computers", "codes"):
         for label, update in plan.get(section, {}).items():
+            if config.get("_automatic_codes") and section == "codes":
+                continue
             action = (
                 "Install/replace"
                 if update.get("install")
                 else ("Check runtime" if update.get("checkuenv") else "Deactivate")
             )
-            msg += f"⬜ {action}: {escape(label)}<br>"
-    for task in tasks:
-        msg += f"⬜ Install supporting files: {escape(task['name'])}<br>"
+            name = label
+            if config.get('_automatic_codes') and update.get('computer_key'):
+                name = defined[update['computer_key']].get('display_name', label)
+            msg += f"⬜ {action}: {escape(name)}<br>"
+    if config.get("_automatic_codes"):
+        msg += f"⬜ Configure {len(codes)} required code registrations and {len(tasks)} supporting runtimes for the detected apps.<br>"
+    else:
+        for task in tasks:
+            msg += f"⬜ Install supporting files: {escape(task['name'])}<br>"
     for problem in plan["blocked"]:
         msg += f"❌ {escape(problem)}<br>"
     return True, msg, plan
