@@ -102,10 +102,11 @@ Model app's supported runtime configuration and fallback depot binding are
 prepared for fresh GUI kernels as well as Code wrappers. Block2 uses standard
 prefix packaging and the nested metadata required by the ORCA selector.
 
-No remote computers, SSH onboarding, hardware-QPU submission or old research
-worker revival belongs to this first empty-instance test. Existing quantum
-worker deployment holds remain separate; do not advertise those paths as
-installed by these recipes. Preserve the current modern app implementations.
+The localhost-only phase does not configure remote computers or submit hardware
+QPU jobs. The selected modern `quantum-energy/v1` worker has its own explicit
+installation task and source-manifest check; it does not restore retired or
+paused research workers. Tigu and Daint installation/qualification are separate
+phases. Preserve the current modern app implementations and old Codes.
 
 After approved small GUI jobs, verify retrieval, parsing, reopening, package
 consistency and startup of this new instance. Merge/release preparation follows

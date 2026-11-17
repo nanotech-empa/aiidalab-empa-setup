@@ -215,6 +215,10 @@ def get_config(
         grant = account_map.get(key, widget_replacements.get("grant"))
         if grant is not None:
             data["computers"][key] = recursive_replace(computer, {"grant": grant})
+    for key, task in data.get("setup_tasks", {}).items():
+        grant = account_map.get(task["computer"], widget_replacements.get("grant"))
+        if grant is not None:
+            data["setup_tasks"][key] = recursive_replace(task, {"grant": grant})
     data = recursive_replace(data, all_replacements)
     data["_deployment"] = deployment
     data["_install_local_runtimes"] = install_local_runtimes

@@ -72,6 +72,30 @@ def test_installed_image_does_not_require_registry_access(monkeypatch):
     assert not any("find" in args or "pull" in args for args in calls)
 
 
+def test_public_service_download_keeps_plain_runtime_label(monkeypatch):
+    image = "empa-spm-native/1.6.0-a0e486a:3077571942"
+    calls = remote_responses(
+        monkeypatch,
+        {
+            ("uenv", "image", "ls"): ("uenv arch", True),
+            ("uenv", "image", "pull", image): ("Not in deploy registry", False),
+            ("uenv", "image", "find", "service::" + image): (
+                "uenv arch system\n" + image + " gh200 daint",
+                True,
+            ),
+        },
+    )
+    assert readiness.manage_uenv_images([("daint", image)])
+    assert ["uenv", "image", "pull", "service::" + image] in calls
+    assert ["uenv", "run", image, "--", "/bin/true"] in calls
+    assert not any(
+        "service::" in arg
+        for args in calls
+        if args[:2] == ["uenv", "run"]
+        for arg in args
+    )
+
+
 def test_code_environment_is_applied_inside_the_uenv_view(monkeypatch):
     calls = remote_responses(
         monkeypatch,

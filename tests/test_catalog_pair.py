@@ -46,13 +46,12 @@ def rendered(monkeypatch, **kwargs):
 @pytest.mark.parametrize(
     "codes,expected",
     [
-        (["local_pythonjob"], []),
+        (["local_pythonjob"], ["local_python_worker_runtime"]),
         (["local_banduppy"], ["local_banduppy_runtime"]),
         (
             ["local_cp2k", "local_stm", "local_sparse_overlap"],
             ["local_cp2k_spm_runtime"],
         ),
-        (["local_qe_pw", "local_qe_pp"], ["local_qe75_runtime"]),
         (["local_block2"], ["local_block2_runtime"]),
         (
             ["local_cubehandler", "local_orca_cube_render"],
@@ -102,7 +101,7 @@ def test_exact_local_resources_and_paths_are_rendered(monkeypatch):
     assert setup["default_memory_per_machine"] == "12582912"
     assert setup["transport"] == "core.local" and setup["scheduler"] == "core.direct"
     assert "2026.2" in config["codes"]["local_cp2k"]["filepath_executable"]
-    assert "7.5" in config["codes"]["local_qe_pw"]["filepath_executable"]
+    assert not any(key.startswith("local_qe_") for key in config["codes"])
 
 
 @pytest.mark.parametrize(
@@ -110,7 +109,7 @@ def test_exact_local_resources_and_paths_are_rendered(monkeypatch):
     [
         ("local_default_mpi", "0"),
         ("local_memory_kib", "oops"),
-        ("local_qe_prefix", "/tmp/$(whoami)"),
+        ("local_python_worker_prefix", "/tmp/$(whoami)"),
     ],
 )
 def test_invalid_paths_and_resources_fail_at_inspection(monkeypatch, setting, value):
@@ -132,6 +131,9 @@ def test_invalid_paths_and_resources_fail_at_inspection(monkeypatch, setting, va
         ("tigu_module_itensor_gs", "model"),
         ("tigu_module_phonopy", "support"),
         ("tigu_module_orca", "orca"),
+        ("tigu_module_pythonjob", "python"),
+        ("tigu_module_pythtb", "pythtb"),
+        ("tigu_module_quantum", "quantum"),
     ],
 )
 def test_real_module_catalog_is_scoped_and_has_no_local_paths(
@@ -166,3 +168,73 @@ def test_real_module_catalog_is_scoped_and_has_no_local_paths(
         == "mpirun -np {tot_num_mpiprocs}"
     )
     assert set(selected_ssh_config(config, computers)) <= {"tigu", "ela.cscs.ch"}
+
+
+def test_daint_private_model_uses_selected_account_and_shared_native_image(monkeypatch):
+    monkeypatch.setattr(
+        control, "get_local_commit", lambda: "reviewed-fixture-revision"
+    )
+    ok, message, config = control.get_config(
+        file_path=CATALOG,
+        deployment="hosted",
+        selected_computers=["daint.alps"],
+        computer_grants={"daint.alps": "mr820"},
+        config_widgets={
+            "cscsuser": SimpleNamespace(value="cpi"),
+            "grant": SimpleNamespace(value="unrelated-global-account"),
+        },
+    )
+    assert ok, message
+    tasks = installation_tasks(config, {"daint.alps"}, {"daint_itensor_gs"})
+    assert {task["name"] for task in tasks} == {
+        "daint_directories",
+        "daint_mps_wrapper",
+        "daint_model_runtime",
+    }
+    model_task = next(task for task in tasks if task["name"] == "daint_model_runtime")
+    args = model_task["commands"][0]["arguments"]
+    assert args[args.index("--account") + 1] == "mr820"
+    assert args[args.index("--root") + 1] == "/users/cpi/opt/empa-native-20261116"
+    for key in ("daint_itensor_gs", "daint_itensor_segment"):
+        code = config["codes"][key]
+        assert code["runtime_receipt"]["host"] == "daint.alps.cscs.ch"
+        assert code["runtime_receipt"]["image"] in code["prepend_text"]
+        assert (
+            "/users/cpi/opt/empa-native-20261116/model-4f7f2f963b/"
+            in code["filepath_executable"]
+        )
+
+
+def test_complete_machine_policy_and_modern_worker_task(monkeypatch):
+    config = rendered(monkeypatch)
+    codes = config["codes"]
+    assert all(
+        not (
+            item["computer"] == "daint.alps"
+            and item["default_calc_job_plugin"]
+            in {"orca.orca", "empa_tb.calculate", "gaussian"}
+        )
+        for item in codes.values()
+    )
+    assert codes["local_pythonjob"]["default_calc_job_plugin"] == "pythonjob.pythonjob"
+    assert codes["tigu_pythonjob"]["default_calc_job_plugin"] == "pythonjob.pythonjob"
+    assert codes["python"]["default_calc_job_plugin"] == "pythonjob.pythonjob"
+    tasks = installation_tasks(config, {"mac-localhost"}, {"local_quantum_energy"})
+    assert [task["name"] for task in tasks] == ["local_quantum_runtime"]
+    assert codes["local_quantum_energy"]["manifest"]["extra"] == "quantum_energy_tools"
+    assert not any(key.startswith("local_qe_") for key in codes)
+
+
+def test_qe_pp_python_workers_are_separate_from_native_banduppy(monkeypatch):
+    config = rendered(monkeypatch)
+    python = config["codes"]["local_pythonjob"]
+    assert python["default_calc_job_plugin"] == "pythonjob.pythonjob"
+    assert python["label"] == "python"
+    assert "pymatgen.io.common" in str(python["runtime_checks"])
+    assert "skimage.transform" in str(python["runtime_checks"])
+    assert (
+        config["codes"]["local_banduppy"]["default_calc_job_plugin"]
+        == "nanotech_empa.qe_banduppy"
+    )
+    assert not any(name.startswith("local_qe_") for name in config["codes"])
+    assert "local_qe75_runtime" not in config["setup_tasks"]

@@ -153,7 +153,7 @@ def manage_uenv_images(requirements):
                 output, ok = remote_command(host, ["uenv", "image", "pull", image])
                 if not ok and not image.startswith("service::"):
                     listing, found = remote_command(
-                        host, ["uenv", "image", "find", "service::"]
+                        host, ["uenv", "image", "find", f"service::{image}"]
                     )
                     names = {
                         line.split()[0].removeprefix("service::")
@@ -241,12 +241,17 @@ def manage_uenv_images(requirements):
                     print(f"❌ Selected module provider check failed: {error}")
                     return False
             if item["code_config"].get("runtime_receipt"):
-                if not local:
+                spec = item["code_config"]["runtime_receipt"]
+                if not local and (
+                    spec.get("host") != host
+                    or spec.get("image") != image
+                    or spec.get("view") != view
+                ):
                     print("❌ Local runtime receipts cannot qualify a remote Code.")
                     return False
                 try:
                     item["code_config"]["_runtime_extras"] = verified_code_metadata(
-                        item["code_config"]
+                        item["code_config"], run_command
                     )
                 except (OSError, ValueError, KeyError, TypeError) as error:
                     print(f"❌ Runtime metadata check failed: {error}")

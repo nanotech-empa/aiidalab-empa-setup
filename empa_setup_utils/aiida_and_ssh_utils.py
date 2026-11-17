@@ -147,7 +147,7 @@ def compare_code_configuration(code_label, repository_code_data):
     
     if repository_code_data.get("runtime_receipt") or repository_code_data.get("runtime_provider"):
         try:
-            expected = verified_code_metadata(repository_code_data)
+            expected = verified_code_metadata(repository_code_data, run_command)
             expected.update(verified_remote_provider(repository_code_data, run_command))
         except (OSError, ValueError, KeyError, TypeError) as error:
             return False, f"⚠️ Runtime receipt is unavailable or changed: {error}<br>"
@@ -305,7 +305,7 @@ def setup_aiida_code(code_name, code_config, hide=False, pktorelabel=False, inst
     # code_name pw-7.4:v2@daint.alps_s1267
     code = code_name.split("@")[0]
     computer = code_name.split("@")[1]
-    runtime_extras = verified_code_metadata(code_config) if install else {}
+    runtime_extras = verified_code_metadata(code_config, run_command) if install else {}
     if install:
         runtime_extras.update(verified_remote_provider(code_config, run_command))
     relabeled = relabel(code) if pktorelabel else code

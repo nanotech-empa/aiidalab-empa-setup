@@ -35,17 +35,20 @@ remote computer may run.
 | --- | --- |
 | BandUPpy | New isolated worker, exact wheel closure, imports and pip check; register the actual interpreter. |
 | CP2K/SPM | Official ARM64 CP2K2026.2, matching MPI, complete basis/potential/D3 data and selected SPM source. Current newer CP2K needs its own native qualification. |
-| QE | Complete selected QE7.5 closure and matching MPI, including pw/pp/projwfc/dos/pw2wannier90; preserve the official QE app source. |
+| QE | Install and register QE7.5 through the official QE app, then verify/reuse its native programs and Codes. EMPA setup must not run another localhost QE installer or overwrite those registrations. Preserve the official app source. |
+| QE-PP Python | Separate Python3.12 worker with cloudpickle, NumPy/SciPy, pymatgen and scikit-image; verify imports before registering the PythonJob Code. |
 | CubeHandler | Current official graphics libraries and reviewed CubeHandler source; CPU Mesa/EGL startup, then a real GUI render. No legacy library-path copying. |
 | Block2 | Official0.5.4 cp312 ARM64 wheel, native import and owned launcher; Code extras contain nested block2 version/artifact/launcher hashes and the real GUI selector accepts it. |
 | Model | Official Julia1.12.6; unchanged committed Project/Manifest; private instantiated depot; app-owned runtime export, fresh-GUI binding and both local wrapper Codes. |
 | ORCA | User-supplied licensed archive SHA/architecture, exact Fortran-enabled MPI4.1.8, clean linked libraries and native numeric-type probe. |
 | Native support | Official Bader/Wannier90/SKEAF and source-built Critic2/PPAFM with data/native-library checks. Keep actual native build/parser failures explicit. |
+| Quantum | Source-locked modern quantum-energy/v1 SDK worker, manifest/source identity and import checks; no provider credentials, hardware calls or retired research workers. |
 
-PythTB uses its app Python dependency, not a fabricated executable Code.
+PythTB runs its local solver in the app environment. Its separately reviewed
+native Tigu worker/CalcJob is a remote deployment route, not a second local
+scientific implementation; retain that route's independent acceptance status.
 Phonopy and app-owned Python helpers require their supplying plugins/apps and
 console commands; an absent command must be diagnosed before registration.
-Quantum worker new deployments remain separately deferred.
 
 ## Failure, reuse and preservation
 

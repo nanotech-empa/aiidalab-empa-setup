@@ -1,16 +1,62 @@
 """Verify installer receipts before attaching plain metadata to a new Code."""
 
 import hashlib
+import inspect
 import json
 import shlex
 from copy import deepcopy
 from pathlib import Path
 
 
-def verified_code_metadata(config):
+def verified_code_metadata(config, runner=None):
     spec = config.get("runtime_receipt")
     if not spec:
         return {}
+    if spec.get("host"):
+        if runner is None:
+            raise ValueError(
+                "A remote runtime receipt requires its selected transport."
+            )
+        # Run the same strict verifier inside the selected immutable uenv. The
+        # remote side imports stdlib only, never AiiDA or a user's live profile.
+        remote_config = deepcopy(config)
+        remote_config["runtime_receipt"].pop("host")
+        for field in ("image", "view", "python"):
+            remote_config["runtime_receipt"].pop(field)
+        source = (
+            "import hashlib,inspect,json,shlex,sys\n"
+            "from pathlib import Path\nfrom copy import deepcopy\n"
+            + inspect.getsource(verified_code_metadata)
+            + "\nprint(json.dumps(verified_code_metadata(json.loads(sys.argv[1]))))\n"
+        )
+        arguments = [
+            "uenv",
+            "run",
+            f"--view={spec['view']}",
+            spec["image"],
+            "--",
+            spec["python"],
+            "-c",
+            source,
+            json.dumps(remote_config),
+        ]
+        output, ok = runner(
+            [
+                "ssh",
+                "-oBatchMode=yes",
+                "-oStrictHostKeyChecking=yes",
+                spec["host"],
+                shlex.join(arguments),
+            ]
+        )
+        if not ok:
+            raise ValueError(
+                f"Remote runtime receipt is unavailable or changed: {output}"
+            )
+        result, _ = json.JSONDecoder().raw_decode(output.lstrip())
+        if not isinstance(result, dict) or set(result) != set(spec["extras"]):
+            raise ValueError("Remote runtime returned unexpected capability metadata.")
+        return result
     path = Path(spec["path"])
     if path.is_symlink():
         raise ValueError("The runtime receipt is a symlink.")

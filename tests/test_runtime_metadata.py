@@ -158,6 +158,43 @@ def test_scalar_capabilities_are_bound_before_registration(runtime):
         verified_code_metadata(runtime)
 
 
+def test_same_verifier_checks_remote_uenv_bytes_before_registration(runtime):
+    """Execute the actual stdlib verifier payload, without SSH or uenv control."""
+    import shlex
+
+    expected = verified_code_metadata(runtime)
+    runtime["runtime_receipt"].update(
+        host="daint.alps.cscs.ch",
+        image="service::empa-model-native/test:123",
+        view="default",
+        python=sys.executable,
+    )
+
+    def runner(command):
+        assert command[:4] == [
+            "ssh",
+            "-oBatchMode=yes",
+            "-oStrictHostKeyChecking=yes",
+            "daint.alps.cscs.ch",
+        ]
+        arguments = shlex.split(command[-1])
+        assert arguments[:4] == [
+            "uenv",
+            "run",
+            "--view=default",
+            "service::empa-model-native/test:123",
+        ]
+        process = subprocess.run(arguments[5:], capture_output=True, text=True)
+        return process.stdout + process.stderr, process.returncode == 0
+
+    assert verified_code_metadata(runtime, runner) == expected
+    from pathlib import Path
+
+    Path(runtime["filepath_executable"]).write_bytes(b"changed remote launcher")
+    with pytest.raises(ValueError, match="unavailable or changed"):
+        verified_code_metadata(runtime, runner)
+
+
 def test_model_codes_are_discovered_by_the_real_app(
     runtime, aiida_profile, aiida_localhost, monkeypatch
 ):
