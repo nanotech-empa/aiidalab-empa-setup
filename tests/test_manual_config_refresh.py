@@ -65,6 +65,20 @@ def test_opening_and_switching_branches_do_not_synchronize(cached_app):
     assert not hasattr(widget, "_start_periodic_check_updates")
 
 
+def test_other_resources_are_not_described_as_unsupported(cached_app):
+    widget, _, _ = cached_app
+    widget.deactivate_codes["pw-7.5@localhost"] = start.ipw.Checkbox(value=True)
+    widget.updates_needed = {
+        "unmanaged": {"computers": [], "codes": {"custom@localhost": 123}}
+    }
+    widget.show_unmanaged_choices()
+    assert set(widget.deactivate_codes) == {"custom@localhost"}
+    assert not widget.deactivate_codes["custom@localhost"].value
+    heading = widget.unmanaged_choices.children[0].value
+    assert "not managed by this setup" in heading
+    assert "not supported" not in heading
+
+
 def test_inspect_synchronizes_first_and_preserves_selection(cached_app, monkeypatch):
     widget, path, data = cached_app
     widget.computer_selection.value = ("alpha",)

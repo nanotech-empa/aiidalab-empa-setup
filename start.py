@@ -523,7 +523,7 @@ class ConfigAiiDAlabApp(ipw.VBox):
             rows.insert(
                 0,
                 ipw.HTML(
-                    "<b>These codes/computers are not supported by this configuration. Keep them or deactivate?</b><br>"
+                    "<b>Other codes/computers not managed by this setup. Keep them or deactivate?</b><br>"
                     "Keep is the default. Check only those to deactivate, then inspect again. "
                     "Disabling a computer prevents new use of all codes on it. "
                     "Existing calculation data is retained."

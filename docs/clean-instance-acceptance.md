@@ -56,6 +56,15 @@ when invoked for local installation/registration; without it the CLI passes
 supported explicit option. No official QE patch or external PR is required for
 this setup path. Do not add a duplicate local QE task to the EMPA catalog.
 
+In **Inspect updates**, the QE app's local Codes must appear as existing
+registrations that are kept, with no deactivation checkboxes. With no local QE
+Codes, show the optional instruction to install the Quantum ESPRESSO app and
+complete its code setup; other EMPA runtime selections remain usable. Check a
+partially registered set too. Hidden Codes/disabled Computers must not be
+reported as available. Existing QE-PP `python3`/PythonJob and `critic2` helpers
+are recognized separately from the QE executables. Inspection alone does not
+verify executable versions or authorize any calculation.
+
 ## Failure, reuse and preservation
 
 - Try an absent executable/plugin, wrong architecture, corrupted artifact and

@@ -17,6 +17,7 @@ from .aiida_and_ssh_utils import (
     setup_aiida_computer,
 )
 from .configuration import load_config_bundle, resolve_variables
+from .external_codes import external_codes_html, inspect_external_codes
 from .readiness import (
     manage_uenv_images as manage_uenv_images,  # public compatibility import
 )
@@ -327,6 +328,12 @@ def process_aiida_configuration(
     if not (status and codes_ok):
         return False, msg + computer_msg + code_msg, {}
 
+    providers, external_pks = inspect_external_codes(
+        config, active_codes, inactive_codes, active_computers, computers
+    )
+    plan["external_code_providers"] = providers
+    msg += external_codes_html(providers)
+
     defined = config.get("computers", {})
     valid_computers = set(_configured_computer_labels(defined))
     valid_computers.update(data["setup"]["label"] for data in defined.values())
@@ -345,7 +352,7 @@ def process_aiida_configuration(
     plan["unmanaged"]["codes"] = {
         f"{label}@{computer}": pk
         for label, computer, pk in sorted(active_codes)
-        if f"{label}@{computer}" not in valid_codes
+        if f"{label}@{computer}" not in valid_codes and pk not in external_pks
     }
     if not set(deactivate_computers) <= set(plan["unmanaged"]["computers"]):
         return False, "❌ The computer choices changed. Inspect again.<br>", {}
