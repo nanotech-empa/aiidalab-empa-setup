@@ -215,6 +215,9 @@ def test_license_archive_discovery_accepts_only_exact_user_supplied_bytes(
 @pytest.fixture
 def automatic_widget(discovery, monkeypatch):
     config, _, _, _ = discovery
+    # Exercise the explicitly supported Linux ARM64 personal-Docker form on
+    # hosted x86 CI too; no native executable is started by these widget tests.
+    monkeypatch.setattr("platform.machine", lambda: "aarch64")
     monkeypatch.setattr(start, "available_config_branches", lambda **kw: ["main"])
     monkeypatch.setattr(
         start.ConfigAiiDAlabApp, "check_paused_workchains", lambda self: (False, "")
