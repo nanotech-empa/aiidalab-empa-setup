@@ -11,7 +11,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        aiida: ['aiida-core==2.8.0', 'aiida-core==2.9.4']
+        aiida: ['aiida-core==2.9.4']
         aiidalab: ['26.9.0', '26.10.0']
     steps:
       - uses: actions/checkout@v7
