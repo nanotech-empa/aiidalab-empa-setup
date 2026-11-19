@@ -22,9 +22,9 @@ the exact expected archive is recognized by checksum. ORCA is never downloaded
 or redistributed. Tigu is the single module-based target, including PythTB;
 Daint uses the maintained uenvs and excludes ORCA executables, Gaussian and PythTB.
 
-This app/controller/catalog pair remains a draft candidate until fresh-instance
-acceptance. Preserve previous source heads and the native/registration/scientific
-evidence separately. The maintained deployment/native recipes and administrator
+Use the merged default branches of this app and its paired catalog for the
+fresh-instance trial. Source integration and fresh-instance qualification are
+separate: preserve native/registration/scientific evidence independently. The maintained deployment/native recipes and administrator
 module instructions remain in the paired catalog; this UI does not change their
 scientific settings, versions, ABI identities or licensing requirements.
 
@@ -40,8 +40,8 @@ Select the current supported official
 [AiiDAlab full-stack release](https://github.com/aiidalab/aiidalab-docker-stack),
 record its immutable image digest and native architecture, and inspect its
 Python, AiiDA and AiiDAlab versions before installing apps. The modern setup
-requires Python >=3.12 and AiiDAlab >=26.9.0; its approved AiiDA migration
-window remains >=2.8,<3. Use the image's compatible interpreter and services.
+requires Python >=3.12, AiiDA >=2.9.4,<3 and AiiDAlab >=26.9.0,
+following the approved modern support policy. Use the image's compatible interpreter and services.
 Do not upgrade an old shared profile through a different interpreter.
 
 On the Docker host, choose unused container/volume names and a local port.
@@ -75,8 +75,10 @@ The supported application set includes ORCA, Surfaces, Nanoribbons, Empa QE
 post-processing, PythTB and Model Hamiltonians, with the shared widgets and
 backend selections required by those apps. ELN/openBIS have separate modern
 sources and immutable legacy releases. Install the appropriate scientific
-plugins before registering their Codes. PythTB is an app dependency, not an
-executable Code. Do not patch or replace the official QE app to install the
+plugins before registering their Codes. PythTB models, orbitals and Wannier
+now use the native `empa_tb.calculate` Code on Localhost or Tigu. The catalog
+builds the matching worker from the selected merged app source and checks its
+model/postprocessing identities and complete capability set. Do not patch or replace the official QE app to install the
 separate Empa QE post-processing app.
 
 Official third-party releases are the normal dependency source. A reviewed
@@ -86,11 +88,43 @@ strings do not prove that the published SPM or CubeHandler package contains
 all selected source changes. Widgets-base remains the selected official release;
 review-held upstream patches are not hidden installation prerequisites.
 
-## Install the paired setup candidate
+## Install the paired setup and shared assistant
 
-Until acceptance is complete, use the existing [nanotech-empa/aiidalab-empa-setup#14](https://github.com/nanotech-empa/aiidalab-empa-setup/pull/14) and configuration
-PR13 candidates together and record both complete commit hashes. The extended
-catalog is schema 5: older consumers reject it before Apply.
+Use `main` from both `nanotech-empa/aiidalab-empa-setup` and
+`nanotech-empa/aiidalab-alps-files`; record the complete selected commits.
+The merged integration is tracked in
+[nanotech-empa/aiidalab-empa-setup#14](https://github.com/nanotech-empa/aiidalab-empa-setup/pull/14)
+and [nanotech-empa/aiidalab-alps-files#13](https://github.com/nanotech-empa/aiidalab-alps-files/pull/13).
+The catalog is schema 5: older consumers reject it before Apply. In the new
+instance terminal, install the setup directly from its merged branch:
+
+```console
+aiidalab install aiidalab-empa-setup@git+https://github.com/nanotech-empa/aiidalab-empa-setup@main
+```
+
+Open **AiiDAlab Config App**, keep Configuration source on `main`, and use
+**Inspect updates** to download the paired catalog. No private working-directory
+snapshot is needed.
+
+For the shared chat, authenticate the new instance's GitHub CLI normally, then
+install the shared component before the app bindings. Do not copy credentials
+from an old container:
+
+```console
+gh auth login --hostname github.com --git-protocol https
+gh auth setup-git
+python -m pip install 'git+https://github.com/nanotech-empa/aiidalab-ai-assistant.git@259f64b9242b3813f6920ee1c51c52f9636f39e2'
+```
+
+This merged assistant includes saved-array/scientific guidance and the common
+structure-editor guide and actions. The private repository requires authorized
+account access. Install the scientific apps through the ordinary app manager,
+using their default branches and recording resolved commits. ORCA and PythTB
+already include the matching editor bindings; Surfaces/Nanoribbons use the same
+shared structure-manager tools. Native PythTB's unified-route merge is
+`902d3b00023f6d21a09c261cccc65bd72aaaff39`; its native openBIS export is on master
+at `4e3b0c57cae6cf4d6294a53cc303230ac0bf890f`.
+XPS research branches are outside this installation.
 
 1. Install the intended scientific app through the ordinary AiiDAlab app manager.
 2. Open setup, select the reviewed catalog under Configuration source, and keep
@@ -104,7 +138,7 @@ catalog is schema 5: older consumers reject it before Apply.
 6. For ORCA, upload your licensed matching Linux ARM64 archive using Files → Work.
    Its checksum is verified before use; the archive is never downloaded/redistributed.
 
-The [runtime installation guide](https://github.com/nanotech-empa/aiidalab-alps-files/blob/feature/setup-readiness-checks/docs/runtime-installation.md)
+The [runtime installation guide](https://github.com/nanotech-empa/aiidalab-alps-files/blob/main/docs/runtime-installation.md)
 lists exact recipes, internal paths, prerequisites and verification limits. Paths
 are catalog-owned; existing provenance-linked Codes are never silently retargeted.
 
@@ -133,6 +167,6 @@ paused research workers. Tigu and Daint installation/qualification are separate
 phases. Preserve the current modern app implementations and old Codes.
 
 After approved small GUI jobs, verify retrieval, parsing, reopening, package
-consistency and startup of this new instance. Merge/release preparation follows
-review of the actual fresh-instance evidence; source tests alone do not qualify
-native execution or a production release.
+consistency and startup of this new instance. Record fresh-instance acceptance
+before claiming production/release qualification; source merges and source tests
+alone do not qualify the newly installed native execution path.

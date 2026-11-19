@@ -19,7 +19,8 @@ chosen catalog; Apply uses exactly that reviewed revision.
 
 
 Test the setup/configuration candidate pair in a new independent Linux ARM64
-AiiDAlab container. Keep both PRs unmerged until this acceptance is assessed.
+AiiDAlab container. Use the integrated default branches and retain this
+fresh-instance acceptance as a separate installation/scientific qualification.
 Use the [new-instance runbook](recreate-personal-docker.md); do not copy a live
 home, profile, database, repository, broker, secrets or old dirty source tree.
 
@@ -30,7 +31,7 @@ home, profile, database, repository, broker, secrets or old dirty source tree.
    Check packages and startup with the image's intended interpreter.
 2. Install the selected app/plugin sources with the normal app manager and
    record canonical commits, declarations, installed metadata and import origins.
-   Install [nanotech-empa/aiidalab-empa-setup#14](https://github.com/nanotech-empa/aiidalab-empa-setup/pull/14) and [nanotech-empa/aiidalab-alps-files#13](https://github.com/nanotech-empa/aiidalab-alps-files/pull/13) at the reviewed exact heads. Schema 4
+   Install [nanotech-empa/aiidalab-empa-setup#14](https://github.com/nanotech-empa/aiidalab-empa-setup/pull/14) and [nanotech-empa/aiidalab-alps-files#13](https://github.com/nanotech-empa/aiidalab-alps-files/pull/13) from their integrated default branches and record exact commits. Schema 5
    must be displayed; old consumers must refuse it before any Apply.
 3. Opening setup reads the cache only. **Inspect updates** may obtain/synchronize
    the selected configuration; changing the branch alone must not fetch.
@@ -62,9 +63,13 @@ remote computer may run.
 | Native support | Official Bader/Wannier90/SKEAF and source-built Critic2/PPAFM with data/native-library checks. Keep actual native build/parser failures explicit. |
 | Quantum | Source-locked modern quantum-energy/v1 SDK worker, manifest/source identity and import checks; no provider credentials, hardware calls or retired research workers. |
 
-PythTB runs its local solver in the app environment. Its separately reviewed
-native Tigu worker/CalcJob is a remote deployment route, not a second local
-scientific implementation; retain that route's independent acceptance status.
+PythTB uses the same native CalcJob route for models, selected orbitals and
+Wannier on Localhost and Tigu. Install the app first; Localhost Inspect must
+select `local_pythtb` and its matching worker task. Verify the worker manifest
+reports solve/orbital/wannier capabilities, matching model/postprocessing hashes
+and PythTB 2.0.2 before registering the Code. Use the real Review/Submit/Open
+route for a small model and saved-model postprocessing without another SCF.
+Tigu retains its independent remote installation/acceptance status.
 Phonopy and app-owned Python helpers require their supplying plugins/apps and
 console commands; an absent command must be diagnosed before registration.
 

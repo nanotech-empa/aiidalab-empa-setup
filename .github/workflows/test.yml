@@ -18,7 +18,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           repository: nanotech-empa/aiidalab-alps-files
-          ref: 3e6185f58c0ccb8232ce25ef9c19e4fe2c01c0bc
+          ref: 436ec243841586899132ce55e4758e75716f635e
           path: companion-catalog
       - uses: actions/setup-python@v7
         with:

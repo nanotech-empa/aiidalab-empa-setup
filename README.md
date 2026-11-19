@@ -7,8 +7,7 @@ Application to configure computers and codes for Empa nanotech@surfaces lab
 ## Installation
 
 The modern EMPA application line requires Python >=3.12 and AiiDAlab >=26.9.0.
-AiiDA >=2.8,<3 is the explicitly approved migration window; newer application
-work targets AiiDA 2.9.2. These are support-policy choices, not claims that
+AiiDA >=2.9.4,<3 is the approved modern support floor. These are support-policy choices, not claims that
 older versions fail. The setup commands create codes non-interactively so that
 unattended registration does not stop at CLI prompts.
 
@@ -88,7 +87,8 @@ calculations, but are not additional targets in the normal interface.
 
 The catalog explicitly maps each supported app to its Code keys. Shared helpers
 are deduplicated. QE-PP retains its PythonJob worker; PythTB has a Tigu native
-route and runs through its Python dependency on localhost. The official QE app
+route and the same source-matching native Code on localhost, including orbitals
+and Wannier. The official QE app
 owns local QE installation/registration. Existing local QE Codes are preserved;
 missing ones produce optional QE-app setup guidance, never a second QE installer.
 No ORCA executable, Gaussian or PythTB is installed on Daint; Gaussian is Tigu-only.
@@ -120,7 +120,7 @@ Remote permissions and uenv repository locations are never repaired automaticall
 
 See the [personal Docker recreation runbook](docs/recreate-personal-docker.md),
 [clean-instance acceptance plan](docs/clean-instance-acceptance.md), and the
-companion [runtime catalog and prerequisites](https://github.com/nanotech-empa/aiidalab-alps-files/blob/feature/setup-readiness-checks/docs/runtime-installation.md).
+companion [runtime catalog and prerequisites](https://github.com/nanotech-empa/aiidalab-alps-files/blob/main/docs/runtime-installation.md).
 The selected modern quantum worker remains included for the ORCA app. Older
 experimental/research-worker changes remain deferred; preserve their original
 versioned Codes, checkpoints and runtime prefixes.
