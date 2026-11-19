@@ -113,17 +113,24 @@ from an old container:
 ```console
 gh auth login --hostname github.com --git-protocol https
 gh auth setup-git
-python -m pip install 'git+https://github.com/nanotech-empa/aiidalab-ai-assistant.git@259f64b9242b3813f6920ee1c51c52f9636f39e2'
+python -m pip install 'git+https://github.com/nanotech-empa/aiidalab-ai-assistant.git@264c74009ca56af561469f4280996f9222aee144'
 ```
 
 This merged assistant includes saved-array/scientific guidance and the common
-structure-editor guide and actions. The private repository requires authorized
+structure-editor guide and actions. Open the chat from the scientific app's
+notebook to work with its current draft. The standalone AiiDAlab AI Support app
+also provides a chat from its own app launcher. The private repository requires authorized
 account access. Install the scientific apps through the ordinary app manager,
 using their default branches and recording resolved commits. ORCA and PythTB
 already include the matching editor bindings; Surfaces/Nanoribbons use the same
 shared structure-manager tools. Native PythTB's unified-route merge is
 `902d3b00023f6d21a09c261cccc65bd72aaaff39`; its native openBIS export is on master
 at `4e3b0c57cae6cf4d6294a53cc303230ac0bf890f`.
+For a Localhost PythTB installation, open the app and select it in Setup.
+Inspect and Apply build the worker from the tracked app source. A numbered
+notebook copy can stay open during installation. After registration, select
+the PythTB Code in the app, review and submit a model, then open its result UUID.
+Orbitals and Wannier calculations can use that saved model.
 XPS research branches are outside this installation.
 
 1. Install the intended scientific app through the ordinary AiiDAlab app manager.
