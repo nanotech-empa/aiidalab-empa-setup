@@ -1,0 +1,172 @@
+# Set up a new personal AiiDAlab instance
+
+Install the intended scientific apps using AiiDAlab's app manager, then open
+**AiiDAlab Config App**. The setup detects their frontend installations and QE
+property plugins. Choose Localhost, Tigu and/or Daint and the required accounts;
+there is no Code or runtime-path selector. Localhost is Linux ARM64 inside Docker.
+Deployment type is detected automatically. Start with Localhost for this clean
+instance test, set its CPU/memory budget, then Inspect and review before Apply.
+
+Only the installed apps' required Codes and scoped supporting recipes are planned.
+Install another app and inspect again to add its requirements. Existing matching
+programs are verified and reused. Unexpected registrations default to Keep; hide
+only explicit choices, with renaming only to free a required replacement label.
+All scientific records and provenance remain. A changed app set, catalog revision
+or affected active calculation invalidates Apply.
+
+Local QE programs belong to the official Quantum ESPRESSO app. Install that app
+and complete its localhost code setup if wanted. EMPA setup preserves those Codes
+and does not patch the official app. QE-PP still requires PythonJob/Python Codes.
+For ORCA, upload the licensed vendor archive using Files → Work before inspection;
+the exact expected archive is recognized by checksum. ORCA is never downloaded
+or redistributed. Tigu is the single module-based target, including PythTB;
+Daint uses the maintained uenvs and excludes ORCA executables, Gaussian and PythTB.
+
+Use the merged default branches of this app and its paired catalog for the
+fresh-instance trial. Source integration and fresh-instance qualification are
+separate: preserve native/registration/scientific evidence independently. The maintained deployment/native recipes and administrator
+module instructions remain in the paired catalog; this UI does not change their
+scientific settings, versions, ABI identities or licensing requirements.
+
+
+Use a new official full-stack container with its own home, AiiDA profile,
+database, repository and broker. `localhost` means Linux inside that container,
+not macOS. The native recipes in this candidate target Linux ARM64 only.
+Keep existing containers, scientific results and research runtimes intact.
+
+## Select and inspect the base
+
+Select the current supported official
+[AiiDAlab full-stack release](https://github.com/aiidalab/aiidalab-docker-stack),
+record its immutable image digest and native architecture, and inspect its
+Python, AiiDA and AiiDAlab versions before installing apps. The modern setup
+requires Python >=3.12, AiiDA >=2.9.4,<3 and AiiDAlab >=26.9.0,
+following the approved modern support policy. Use the image's compatible interpreter and services.
+Do not upgrade an old shared profile through a different interpreter.
+
+On the Docker host, choose unused container/volume names and a local port.
+Set CPU/RAM/shared-memory limits from the available host budget. Use a new home
+volume; mount no old home, profile, database, broker, secrets or package cache.
+An official image is the base: this procedure does not require building another
+image or committing the existing container.
+
+In the new instance record:
+
+```console
+uname -m
+python --version
+python -m pip check
+verdi status
+verdi profile list
+```
+
+Verify the new profile UUID and independent storage/services before proceeding.
+Install GitHub CLI and authenticate normally if selected private repositories
+need it; never copy a token or SSH directory from another instance.
+
+## Install the selected applications
+
+Use AiiDAlab's app manager to install the exact reviewed app/backend revisions.
+Record repository, full source commit, installed distribution metadata and
+actual import origin separately. Use current canonical app sources; do not
+restore old working files, numbered notebooks or private runtime patches.
+
+The supported application set includes ORCA, Surfaces, Nanoribbons, Empa QE
+post-processing, PythTB and Model Hamiltonians, with the shared widgets and
+backend selections required by those apps. ELN/openBIS have separate modern
+sources and immutable legacy releases. Install the appropriate scientific
+plugins before registering their Codes. PythTB models, orbitals and Wannier
+now use the native `empa_tb.calculate` Code on Localhost or Tigu. The catalog
+builds the matching worker from the selected merged app source and checks its
+model/postprocessing identities and complete capability set. Do not patch or replace the official QE app to install the
+separate Empa QE post-processing app.
+
+Official third-party releases are the normal dependency source. A reviewed
+unreleased qualification candidate must be selected explicitly at an immutable
+SHA and retain its missing-release item. In particular, unchanged version
+strings do not prove that the published SPM or CubeHandler package contains
+all selected source changes. Widgets-base remains the selected official release;
+review-held upstream patches are not hidden installation prerequisites.
+
+## Install the paired setup and shared assistant
+
+Use `main` from both `nanotech-empa/aiidalab-empa-setup` and
+`nanotech-empa/aiidalab-alps-files`; record the complete selected commits.
+The merged integration is tracked in
+[nanotech-empa/aiidalab-empa-setup#14](https://github.com/nanotech-empa/aiidalab-empa-setup/pull/14)
+and [nanotech-empa/aiidalab-alps-files#13](https://github.com/nanotech-empa/aiidalab-alps-files/pull/13).
+The catalog is schema 5: older consumers reject it before Apply. In the new
+instance terminal, install the setup directly from its merged branch:
+
+```console
+aiidalab install aiidalab-empa-setup@git+https://github.com/nanotech-empa/aiidalab-empa-setup@main
+```
+
+Open **AiiDAlab Config App**, keep Configuration source on `main`, and use
+**Inspect updates** to download the paired catalog. No private working-directory
+snapshot is needed.
+
+For the shared chat, authenticate the new instance's GitHub CLI normally, then
+install the shared component before the app bindings. Do not copy credentials
+from an old container:
+
+```console
+gh auth login --hostname github.com --git-protocol https
+gh auth setup-git
+python -m pip install 'git+https://github.com/nanotech-empa/aiidalab-ai-assistant.git@259f64b9242b3813f6920ee1c51c52f9636f39e2'
+```
+
+This merged assistant includes saved-array/scientific guidance and the common
+structure-editor guide and actions. The private repository requires authorized
+account access. Install the scientific apps through the ordinary app manager,
+using their default branches and recording resolved commits. ORCA and PythTB
+already include the matching editor bindings; Surfaces/Nanoribbons use the same
+shared structure-manager tools. Native PythTB's unified-route merge is
+`902d3b00023f6d21a09c261cccc65bd72aaaff39`; its native openBIS export is on master
+at `4e3b0c57cae6cf4d6294a53cc303230ac0bf890f`.
+XPS research branches are outside this installation.
+
+1. Install the intended scientific app through the ordinary AiiDAlab app manager.
+2. Open setup, select the reviewed catalog under Configuration source, and keep
+   Localhost selected. Deployment and code requirements are determined automatically.
+3. Inspect. Only that app's required programs/registrations may be planned; missing
+   backend plugins are reported, not replaced with fake Codes. No SSH is used locally.
+4. Set the local CPU/memory budget and review the plan. Existing computer replacement
+   is opt-in; unknown Codes default to Keep. Apply only after deliberate review.
+5. Verify real scoped installation, native checks and registration independently.
+   Add further apps and repeat Inspect; shared helpers must not be duplicated.
+6. For ORCA, upload your licensed matching Linux ARM64 archive using Files → Work.
+   Its checksum is verified before use; the archive is never downloaded/redistributed.
+
+The [runtime installation guide](https://github.com/nanotech-empa/aiidalab-alps-files/blob/main/docs/runtime-installation.md)
+lists exact recipes, internal paths, prerequisites and verification limits. Paths
+are catalog-owned; existing provenance-linked Codes are never silently retargeted.
+
+Installation output is streamed and retained in owned logs. Failed/interrupted
+prefixes remain for diagnosis and are not automatically upgraded or deleted.
+Review and diagnose a failure before retrying; never overwrite an incomplete or
+unowned prefix. Existing compatible runtimes still require executable, dependency
+and applicable receipt checks before registration.
+Unselected resources and custom registrations are kept by default.
+
+## Qualify the installation
+
+Run the [localhost-only acceptance checklist](clean-instance-acceptance.md).
+Record installation, registration and real tiny execution as separate outcomes.
+A path/version check or a prepopulated prefix is not an installation PASS.
+
+Julia uses the backend's committed Project/Manifest and a private depot. The
+Model app's supported runtime configuration and fallback depot binding are
+prepared for fresh GUI kernels as well as Code wrappers. Block2 uses standard
+prefix packaging and the nested metadata required by the ORCA selector.
+
+The localhost-only phase does not configure remote computers or submit hardware
+QPU jobs. The selected modern `quantum-energy/v1` worker has its own explicit
+installation task and source-manifest check; it does not restore retired or
+paused research workers. Tigu and Daint installation/qualification are separate
+phases. Preserve the current modern app implementations and old Codes.
+
+After approved small GUI jobs, verify retrieval, parsing, reopening, package
+consistency and startup of this new instance. Record fresh-instance acceptance
+before claiming production/release qualification; source merges and source tests
+alone do not qualify the newly installed native execution path.

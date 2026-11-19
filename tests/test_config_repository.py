@@ -2,7 +2,7 @@ import subprocess
 
 import pytest
 
-from empa_setup_utils import repo_utils
+from empa_setup_utils import control, repo_utils
 
 
 def git(path, *arguments):
@@ -75,3 +75,86 @@ def test_pull_refuses_to_merge_diverged_configuration(repositories):
     assert not repo_utils.pull_latest_changes("main")
     assert git(checkout, "rev-parse", "HEAD") == before
     assert not git(checkout, "status", "--porcelain")
+
+
+def test_branch_listing_uses_only_cached_git_state(repositories, monkeypatch):
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Startup must not query remote branches")
+
+    monkeypatch.setattr(repo_utils, "get_remote_branches", forbidden)
+    assert "main" in repo_utils.available_config_branches()
+
+
+def test_get_config_reads_cache_until_explicit_synchronization(
+    repositories, monkeypatch
+):
+    source, checkout = repositories
+    monkeypatch.setattr(control, "GIT_REPO_PATH", checkout)
+    before = git(checkout, "rev-parse", "HEAD")
+    (source / "config.yml").write_text(
+        "schema_version: 1\nvariables: {message: latest}\n"
+    )
+    git(source, "commit", "-am", "Update configuration")
+    git(source, "push", "origin", "main")
+    ok, _, cached = control.get_config(file_path=checkout / "config.yml")
+    assert ok and "message" not in cached.get("variables", {})
+    assert git(checkout, "rev-parse", "HEAD") == before
+    ok, message = control.check_repository()
+    assert ok, message
+    assert git(checkout, "rev-parse", "HEAD") == git(source, "rev-parse", "HEAD")
+    ok, _, fresh = control.get_config(file_path=checkout / "config.yml")
+    assert ok and fresh["variables"]["message"] == "latest"
+    assert "Please apply" not in message
+
+
+def test_failed_remote_lookup_does_not_allow_cached_inspection(
+    repositories, monkeypatch
+):
+    _, checkout = repositories
+    monkeypatch.setattr(control, "GIT_REPO_PATH", checkout)
+    monkeypatch.setattr(control, "get_latest_remote_commit", lambda **kwargs: None)
+    before = git(checkout, "rev-parse", "HEAD")
+    ok, message = control.check_repository()
+    assert not ok and "Cannot synchronize" in message
+    assert git(checkout, "rev-parse", "HEAD") == before
+
+
+def test_first_explicit_sync_creates_the_configuration_parent(
+    repositories, tmp_path, monkeypatch
+):
+    source, _ = repositories
+    target = tmp_path / "new-home" / "opt" / "configuration"
+    monkeypatch.setattr(repo_utils, "GIT_REPO_PATH", target)
+    monkeypatch.setattr(control, "GIT_REPO_PATH", target)
+    monkeypatch.setattr(
+        repo_utils, "GIT_URL", git(source, "remote", "get-url", "origin")
+    )
+    assert repo_utils.available_config_branches() == ["main"]
+    assert not target.parent.exists()
+    ok, message = control.check_repository()
+    assert ok, message
+    assert (target / "config.yml").is_file()
+
+
+def test_nested_runtime_variables_preserve_native_and_shell_placeholders():
+    from empa_setup_utils.configuration import resolve_variables
+
+    result = resolve_variables(
+        {
+            "user": "cpi",
+            "root": "/store/{user}/opt",
+            "modules": "{root}/modulefiles",
+            "mpi": "mpirun -np {tot_num_mpiprocs}",
+            "library": "${LD_LIBRARY_PATH}",
+        }
+    )
+    assert result["modules"] == "/store/cpi/opt/modulefiles"
+    assert result["mpi"] == "mpirun -np {tot_num_mpiprocs}"
+    assert result["library"] == "${LD_LIBRARY_PATH}"
+
+
+def test_runtime_variable_cycle_is_diagnosed_without_expansion():
+    from empa_setup_utils.configuration import resolve_variables
+
+    with pytest.raises(ValueError, match="variable cycle"):
+        resolve_variables({"a": "{b}/path", "b": "{a}/path"})

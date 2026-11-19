@@ -11,16 +11,23 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        aiida: ['aiida-core==2.8.0', 'aiida-core>=2.8,<3']
+        aiida: ['aiida-core==2.9.4']
+        aiidalab: ['26.9.0', '26.10.0']
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: nanotech-empa/aiidalab-alps-files
+          ref: 436ec243841586899132ce55e4758e75716f635e
+          path: companion-catalog
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - name: Install the approved runtime boundary
-        run: python -m pip install -e . 'aiidalab==26.9.0' '${{ matrix.aiida }}' pytest
+        run: python -m pip install -e . 'aiidalab==${{ matrix.aiidalab }}' '${{ matrix.aiida }}' pytest
       - name: Register codes without interactive input
         env:
           AIIDA_PATH: ${{ runner.temp }}/setup-aiida
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
+          EMPA_SETUP_CATALOG: ${{ github.workspace }}/companion-catalog/config.yml
         run: python -m pytest -q tests

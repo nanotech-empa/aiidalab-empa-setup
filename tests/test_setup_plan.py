@@ -10,7 +10,7 @@ from empa_setup_utils import aiida_and_ssh_utils, control
 def app(tmp_path, monkeypatch):
     path = tmp_path / "config.yml"
     path.write_text("widgets:\n  grant: [select, first, second]\n")
-    monkeypatch.setattr(start, "available_config_branches", lambda: ["main"])
+    monkeypatch.setattr(start, "available_config_branches", lambda **kwargs: ["main"])
     monkeypatch.setattr(start, "check_repository", lambda **kwargs: (True, ""))
     monkeypatch.setattr(
         start.ConfigAiiDAlabApp, "check_paused_workchains", lambda self: (False, "")
@@ -19,7 +19,7 @@ def app(tmp_path, monkeypatch):
     monkeypatch.setattr(
         start.ConfigAiiDAlabApp,
         "widgets_from_yaml",
-        lambda self, **kwargs: original(self, file_path=path, **kwargs),
+        lambda self, **kwargs: original(self, **{**kwargs, "file_path": path}),
     )
     widget = start.ConfigAiiDAlabApp()
     yield widget
