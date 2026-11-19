@@ -113,7 +113,7 @@ from an old container:
 ```console
 gh auth login --hostname github.com --git-protocol https
 gh auth setup-git
-python -m pip install 'git+https://github.com/nanotech-empa/aiidalab-ai-assistant.git@264c74009ca56af561469f4280996f9222aee144'
+python -m pip install 'git+https://github.com/nanotech-empa/aiidalab-ai-assistant.git@93f4a3c34a094026a61bb84ffee07c170e16fd6e'
 ```
 
 This merged assistant includes saved-array/scientific guidance and the common
