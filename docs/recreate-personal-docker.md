@@ -113,7 +113,7 @@ from an old container:
 ```console
 gh auth login --hostname github.com --git-protocol https
 gh auth setup-git
-python -m pip install 'git+https://github.com/nanotech-empa/aiidalab-ai-assistant.git@c9b4c297e82ea16f540c1c3fd84bbe20d575a1af'
+python -m pip install 'git+https://github.com/nanotech-empa/aiidalab-ai-assistant.git@34bbbbd9bf8cd39018b4234c02c5a85884bc58bc'
 ```
 
 Open the chat in a scientific app to edit its draft, or use the standalone
