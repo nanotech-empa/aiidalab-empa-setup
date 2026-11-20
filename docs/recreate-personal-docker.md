@@ -135,13 +135,16 @@ from an old container:
 ```console
 gh auth login --hostname github.com --git-protocol https
 gh auth setup-git
-python -m pip install 'git+https://github.com/nanotech-empa/aiidalab-ai-assistant.git@d48540b795403df7332f10e4a0b7b5ae49641a5c'
+python -m pip install 'git+https://github.com/nanotech-empa/aiidalab-ai-assistant.git@7c2ceea61874e39df77a40b4d5e626c0ba941d1e'
 ```
 
 Open the chat in a scientific app to edit its draft, or use the standalone
 AiiDAlab AI Support launcher. From either chat, ask to rerun a stored AiiDA
 workflow using another stored molecule and give both PKs or UUIDs. Review the
 displayed input changes, then confirm to receive the new process identifier.
+To continue a CP2K NEB from its saved band, give the parent PK or UUID in Home.
+Review the optimized replicas, replica grouping and scheduler allocation before
+confirming each continuation. For an editable draft, ask to open the Surfaces NEB form.
 In On-surface chemistry the chat reports the effective CP2K boundary settings
 and can apply the proposal on request. For Daint resource advice, specify the
 configured CP2K Code so the chat can inspect the site's launch settings. The private repository requires authorized
