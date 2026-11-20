@@ -113,13 +113,16 @@ from an old container:
 ```console
 gh auth login --hostname github.com --git-protocol https
 gh auth setup-git
-python -m pip install 'git+https://github.com/nanotech-empa/aiidalab-ai-assistant.git@93f4a3c34a094026a61bb84ffee07c170e16fd6e'
+python -m pip install 'git+https://github.com/nanotech-empa/aiidalab-ai-assistant.git@c9b4c297e82ea16f540c1c3fd84bbe20d575a1af'
 ```
 
-This merged assistant includes saved-array/scientific guidance and the common
-structure-editor guide and actions. Open the chat from the scientific app's
-notebook to work with its current draft. The standalone AiiDAlab AI Support app
-also provides a chat from its own app launcher. The private repository requires authorized
+Open the chat in a scientific app to edit its draft, or use the standalone
+AiiDAlab AI Support launcher. From either chat, ask to rerun a stored AiiDA
+workflow using another stored molecule and give both PKs or UUIDs. Review the
+displayed input changes, then confirm to receive the new process identifier.
+In On-surface chemistry the chat reports the effective CP2K boundary settings
+and can apply the proposal on request. For Daint resource advice, specify the
+configured CP2K Code so the chat can inspect the site's launch settings. The private repository requires authorized
 account access. Install the scientific apps through the ordinary app manager,
 using their default branches and recording resolved commits. ORCA and PythTB
 already include the matching editor bindings; Surfaces/Nanoribbons use the same
