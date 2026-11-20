@@ -1,11 +1,12 @@
 # Set up a new personal AiiDAlab instance
 
-Install the intended scientific apps using AiiDAlab's app manager, then open
+Install the scientific apps using the script below or AiiDAlab's app manager, then open
 **AiiDAlab Config App**. The setup detects their frontend installations and QE
 property plugins. Choose Localhost, Tigu and/or Daint and the required accounts;
-there is no Code or runtime-path selector. Localhost is Linux ARM64 inside Docker.
-Deployment type is detected automatically. Start with Localhost for this clean
-instance test, set its CPU/memory budget, then Inspect and review before Apply.
+there is no Code or runtime-path selector. The native Localhost recipes target
+Linux ARM64 inside Docker. On ARM64, start with Localhost, set its CPU/memory
+budget, then Inspect and review before Apply. On Intel/AMD Linux, use compatible
+existing Codes or a configured remote computer.
 
 Only the installed apps' required Codes and scoped supporting recipes are planned.
 Install another app and inspect again to add its requirements. Existing matching
@@ -64,7 +65,28 @@ Verify the new profile UUID and independent storage/services before proceeding.
 Install GitHub CLI and authenticate normally if selected private repositories
 need it; never copy a token or SSH directory from another instance.
 
-## Install the selected applications
+## Install the full app set from GitHub
+
+Run the [app installer](../scripts/install-empa-apps.py) as the notebook user in the
+new container's AiiDAlab terminal. It tracks each app's upstream `main` or `master`,
+prints the selected commits, and preserves the installed AiiDA and AiiDAlab versions.
+Configure Git access to the private EMPA repositories first.
+
+```bash
+gh auth login --hostname github.com --git-protocol https
+gh auth setup-git
+curl -fL -o install-empa-apps.py https://raw.githubusercontent.com/nanotech-empa/aiidalab-empa-setup/main/scripts/install-empa-apps.py
+python install-empa-apps.py --dry-run
+python install-empa-apps.py
+```
+
+The optional dry run checks dependency resolution using temporary checkouts.
+Install **Quantum ESPRESSO** and **CSCS MFA** separately from the AiiDAlab App Store.
+The script includes the EMPA BandUPpy app, shared assistant and Config App.
+After installation, reopen the app tabs and use **Inspect updates** in the Config App
+to fetch the runtime catalog.
+
+## Install selected applications manually
 
 Use AiiDAlab's app manager to install the exact reviewed app/backend revisions.
 Record repository, full source commit, installed distribution metadata and
