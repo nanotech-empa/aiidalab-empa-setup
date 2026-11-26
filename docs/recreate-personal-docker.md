@@ -77,10 +77,25 @@ gh auth login --hostname github.com --git-protocol https
 gh auth setup-git
 curl -fL -o install-empa-apps.py https://raw.githubusercontent.com/nanotech-empa/aiidalab-empa-setup/main/scripts/install-empa-apps.py
 python install-empa-apps.py --dry-run
-python install-empa-apps.py
 ```
 
 The optional dry run checks dependency resolution using temporary checkouts.
+Choose the installation command for the intended assistant provider.
+
+| Provider | Install command | First use |
+| --- | --- | --- |
+| OpenAI API, Anthropic API or CSCS Inference | `python install-empa-apps.py` | Select the provider, enter its own API key in **Connection**, and click **Refresh models**. |
+| ChatGPT / Codex | `python install-empa-apps.py --with-codex` | Select **ChatGPT / Codex**, open **Connection** and click **Sign in with ChatGPT** to use your own account. |
+
+`--with-codex` checks the CLI found by the assistant. On a new Linux ARM64 or
+AMD64 instance, it downloads the matching asset from the
+[official Codex release](https://github.com/openai/codex/releases/tag/rust-v0.171.0-alpha.13),
+verifies its size and SHA‑256, and installs the executable under `~/.local/bin`.
+The assistant finds it there even when the kernel `PATH` omits that directory.
+`--dry-run --with-codex` plans the optional installation without downloading the
+CLI. On first use the assistant selects an API provider and opens **Connection**
+when the CLI is absent. It preserves saved provider choices.
+
 Install **Quantum ESPRESSO** and **CSCS MFA** separately from the AiiDAlab App Store.
 The script includes the EMPA BandUPpy app, shared assistant and Config App.
 After installation, reopen the app tabs and use **Inspect updates** in the Config App
@@ -135,8 +150,11 @@ from an old container:
 ```console
 gh auth login --hostname github.com --git-protocol https
 gh auth setup-git
-python -m pip install 'git+https://github.com/nanotech-empa/aiidalab-ai-assistant.git@7c2ceea61874e39df77a40b4d5e626c0ba941d1e'
+python -m pip install 'git+https://github.com/nanotech-empa/aiidalab-ai-assistant.git@main'
 ```
+
+For a manual installation, follow the assistant's
+[provider setup](https://github.com/nanotech-empa/aiidalab-ai-assistant#provider-setup-on-a-fresh-instance).
 
 Open the chat in a scientific app to edit its draft, or use the standalone
 AiiDAlab AI Support launcher. From either chat, ask to rerun a stored AiiDA
