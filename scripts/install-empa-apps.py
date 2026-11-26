@@ -12,13 +12,17 @@
 #   gh auth setup-git
 
 import argparse
+import hashlib
 import platform
+import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 from contextlib import nullcontext
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
+from urllib.request import urlopen
 
 # (AiiDAlab launcher directory, GitHub repository, branch)
 APPS = [
@@ -33,6 +37,113 @@ APPS = [
     ("qe-postprocess", "nanotech-empa/aiidalab-empa-qe-postprocess", "main"),
     ("empa-setup", "nanotech-empa/aiidalab-empa-setup", "main"),
 ]
+
+CODEX_RELEASE = "0.171.0-alpha.13"
+# Pin the official asset digest and byte count before downloading or extracting.
+CODEX_ASSETS = {
+    "aarch64": (
+        124423726,
+        "6a1c5450cda493f3d316e7ffa6de98d24e9f03992efa6fd8884c057c0b13a4f0",
+    ),
+    "x86_64": (
+        122702168,
+        "2cb3e32221868bcb8a422d28a3a06f1c60a40023d6e90e1c2c8d97346818bf3a",
+    ),
+}
+
+
+def codex_target(machine):
+    machine = machine.lower()
+    machine = {"arm64": "aarch64", "amd64": "x86_64"}.get(machine, machine)
+    if machine not in CODEX_ASSETS:
+        raise ValueError(
+            f"The optional Codex installer supports Linux ARM64 and AMD64, found {machine}."
+        )
+    return f"codex-{machine}-unknown-linux-musl", *CODEX_ASSETS[machine]
+
+
+def probe_codex(executable):
+    description = subprocess.check_output(
+        [executable, "--version"], text=True, timeout=10
+    ).strip()
+    if not description.startswith("codex-cli "):
+        raise ValueError(f"Unexpected CLI at {executable}.")
+    subprocess.run(
+        [executable, "app-server", "--stdio", "--help"],
+        stdout=subprocess.DEVNULL,
+        check=True,
+        timeout=10,
+    )
+    return description
+
+
+def resolve_codex():
+    # Pip can add a user site or a .pth file. Use a fresh notebook interpreter.
+    return subprocess.check_output(
+        [
+            sys.executable,
+            "-c",
+            """
+from aiidalab_ai_assistant.codex_client import AIServiceError, find_codex
+
+try:
+    print(find_codex())
+except AIServiceError:
+    pass
+""",
+        ],
+        text=True,
+        timeout=30,
+    ).strip()
+
+
+def install_codex(target):
+    if existing := resolve_codex():
+        print(f"Reusing {probe_codex(existing)} at {existing}.")
+        return
+
+    filename, size, digest = target
+    destination = Path.home() / ".local/bin/codex"
+    if destination.exists() or destination.is_symlink():
+        raise FileExistsError(
+            f"Review the existing Codex path before installing: {destination}"
+        )
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    url = f"https://github.com/openai/codex/releases/download/rust-v{CODEX_RELEASE}/{filename}.tar.gz"
+    with tempfile.TemporaryDirectory(
+        prefix=".codex-stage-", dir=destination.parent
+    ) as tmp:
+        archive = Path(tmp) / "release.tar.gz"
+        actual = hashlib.sha256()
+        received = 0
+        with urlopen(url, timeout=45) as response, archive.open("wb") as output:
+            for chunk in iter(lambda: response.read(1024 * 1024), b""):
+                received += len(chunk)
+                if received > size:
+                    raise ValueError("Codex archive exceeds the official asset size.")
+                actual.update(chunk)
+                output.write(chunk)
+        if received != size or actual.hexdigest() != digest:
+            raise ValueError(
+                "Codex archive size or SHA-256 differs from the official release."
+            )
+        staged = Path(tmp) / "codex"
+        with tarfile.open(archive, "r:gz") as release:
+            member = release.getmember(filename)
+            if not member.isfile():
+                raise ValueError(
+                    "Expected a regular Codex executable in the release archive."
+                )
+            with release.extractfile(member) as source, staged.open("wb") as output:
+                shutil.copyfileobj(source, output)
+        staged.chmod(0o755)
+        version = probe_codex(staged)
+        if version != f"codex-cli {CODEX_RELEASE}":
+            raise ValueError(
+                f"Unexpected version in the verified Codex archive: {version}"
+            )
+        destination.hardlink_to(staged)
+    print(f"Installed {version} at {destination}.")
 
 
 def checkout(path, repo, branch):
@@ -81,6 +192,11 @@ def main():
         action="store_true",
         help="clone in a temporary directory and ask pip to resolve without installing",
     )
+    parser.add_argument(
+        "--with-codex",
+        action="store_true",
+        help="reuse or install the official Codex CLI for optional ChatGPT sign-in",
+    )
     args = parser.parse_args()
     if sys.version_info < (3, 12) or platform.system() != "Linux":
         sys.exit("Run inside the Linux AiiDAlab container with Python 3.12 or newer.")
@@ -105,13 +221,18 @@ def main():
     with staging as tmp:
         apps = Path(tmp) / "apps" if tmp else Path(AIIDALAB_APPS).expanduser().resolve()
         support = Path(tmp) / "opt" if tmp else Path.home() / "opt"
-        install(apps, support, core, lab, args.dry_run)
+        install(apps, support, core, lab, args.dry_run, with_codex=args.with_codex)
 
 
-def install(apps, support, core, lab, dry_run):
+def install(apps, support, core, lab, dry_run, *, with_codex=False):
     arch = platform.machine()
     action = "Planning" if dry_run else "Installing"
     print(f"{action} apps in {apps} with {sys.executable} on Linux {arch}", flush=True)
+    target = codex_target(arch) if with_codex else None
+    if target:
+        print(
+            f"ChatGPT / Codex selected. Reuse a compatible CLI or install {target[0]} from {CODEX_RELEASE}."
+        )
 
     # All top-level checkouts track their upstream main/master. Shared libraries
     # use the versions/commits declared by those apps.
@@ -142,6 +263,14 @@ def install(apps, support, core, lab, dry_run):
         )
         return
     subprocess.run([*pip, "check"], check=True)
+    if target:
+        install_codex(target)
+        print(
+            "In the assistant, choose ChatGPT / Codex and complete Sign in with ChatGPT with your own account."
+        )
+    print(
+        "OpenAI API, Anthropic API and CSCS Inference use their own API keys in the assistant's Connection settings."
+    )
 
     print(
         "Reload the app tabs. If the AiiDA daemon is running, restart it with: verdi daemon restart"
