@@ -47,21 +47,67 @@ def test_optional_cli_is_selected_only_for_apply(
 )
 def test_platform_aliases_match_official_archive(installer, architecture, expected):
     name, size, digest = installer.codex_target(architecture)
-    assert name == f"codex-{expected}-unknown-linux-musl"
+    assert name == f"codex-package-{expected}-unknown-linux-musl"
     assert size > 0 and len(digest) == 64
 
 
-@pytest.mark.parametrize("valid", [False, True])
-def test_archive_hash_and_reuse(installer, tmp_path, monkeypatch, valid):
+@pytest.mark.parametrize("npm", [False, True])
+def test_reuse_checks_the_existing_cli_companion(installer, tmp_path, monkeypatch, npm):
+    launcher = tmp_path / ("bin/codex.js" if npm else "runtime/bin/codex")
+    launcher.parent.mkdir(parents=True)
+    launcher.touch(mode=0o755)
+    link = tmp_path / "codex"
+    link.symlink_to(launcher)
+    native = tmp_path / "codex-linux-arm64"
+    native_bin = native / "vendor/aarch64-unknown-linux-musl/bin"
+    directory = native_bin if npm else launcher.parent
+    directory.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(installer.platform, "machine", lambda: "aarch64")
+
+    def inspect(command, **kwargs):
+        if command[0] == "node":
+            assert npm and command[-2] == "@openai/codex-linux-arm64/package.json"
+            return str(native / "package.json")
+        assert command == [link, "--version"]
+        return "codex-cli 0.171.0-alpha.13.2"
+
+    launched = []
+    monkeypatch.setattr(installer.subprocess, "check_output", inspect)
+    monkeypatch.setattr(
+        installer.subprocess, "run", lambda command, **kw: launched.append(command)
+    )
+    with pytest.raises(ValueError, match="codex-code-mode-host"):
+        installer.probe_codex(link)
+    assert launched == []
+
+    (directory / "codex-code-mode-host").touch(mode=0o755)
+    assert installer.probe_codex(link) == "codex-cli 0.171.0-alpha.13.2"
+    assert launched == [[link, "app-server", "--stdio", "--help"]]
+
+
+@pytest.mark.parametrize("problem", [None, "digest", "missing-host"])
+def test_archive_hash_and_reuse(installer, tmp_path, monkeypatch, problem):
     filename, *_ = installer.codex_target("aarch64")
     data = io.BytesIO()
     with tarfile.open(fileobj=data, mode="w:gz") as archive:
         binary = f'#!/bin/sh\nif [ "$1" = --version ]; then echo "codex-cli {installer.CODEX_RELEASE}"; fi\n'.encode()
-        member = tarfile.TarInfo(filename)
-        member.size = len(binary)
-        archive.addfile(member, io.BytesIO(binary))
+        for name in (
+            "bin/codex",
+            "bin/codex-code-mode-host",
+            "bin/codex-exec-server",
+            "codex-path/rg",
+            "codex-resources/bwrap",
+        ):
+            if problem == "missing-host" and name.endswith("code-mode-host"):
+                continue
+            member = tarfile.TarInfo(name)
+            member.mode = 0o755
+            member.size = len(binary)
+            archive.addfile(member, io.BytesIO(binary))
     payload = data.getvalue()
-    digest = hashlib.sha256(payload if valid else b"different").hexdigest()
+    digest = hashlib.sha256(
+        b"different" if problem == "digest" else payload
+    ).hexdigest()
     dest = tmp_path / ".local/bin/codex"
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     monkeypatch.setattr(
@@ -74,12 +120,15 @@ def test_archive_hash_and_reuse(installer, tmp_path, monkeypatch, valid):
         return io.BytesIO(payload)
 
     monkeypatch.setattr(installer, "urlopen", download)
-    if valid:
+    if problem is None:
         installer.install_codex((filename, len(payload), digest))
-        assert dest.read_bytes() == binary
+        assert dest.read_bytes() == binary and dest.is_symlink()
+        assert dest.resolve().with_name("codex-code-mode-host").read_bytes() == binary
         installer.install_codex((filename, len(payload), digest))
     else:
-        with pytest.raises(ValueError, match="SHA-256"):
+        with pytest.raises(
+            ValueError, match="SHA-256" if problem == "digest" else "code-mode-host"
+        ):
             installer.install_codex((filename, len(payload), digest))
         assert not dest.exists()
     assert urls == [

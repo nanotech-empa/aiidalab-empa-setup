@@ -90,11 +90,16 @@ Choose the installation command for the intended assistant provider.
 `--with-codex` checks the CLI found by the assistant. On a new Linux ARM64 or
 AMD64 instance, it downloads the matching asset from the
 [official Codex release](https://github.com/openai/codex/releases/tag/rust-v0.171.0-alpha.13),
-verifies its size and SHA‑256, and installs the executable under `~/.local/bin`.
-The assistant finds it there even when the kernel `PATH` omits that directory.
-`--dry-run --with-codex` plans the optional installation without downloading the
-CLI. On first use the assistant selects an API provider and opens **Connection**
-when the CLI is absent. It preserves saved provider choices.
+verifies its size and SHA‑256, and installs the full package under
+`~/.local/share/aiidalab/codex`. The launcher points to its `bin/codex` from
+`~/.local/bin/codex`. Keep the runtime directory intact so the CLI can start
+`codex-code-mode-host` for application tools. A CLI copied on its own can
+report its version and support sign-in while application tools fail to start.
+An existing incomplete installation is reported for manual replacement with
+a matching full official package. The installer keeps existing paths.
+`--dry-run --with-codex` plans the optional installation without downloading
+the package. On first use the assistant selects an API provider and opens
+**Connection** when the CLI is absent. Saved provider choices are kept.
 
 Install **Quantum ESPRESSO** and **CSCS MFA** separately from the AiiDAlab App Store.
 The script includes the EMPA BandUPpy app, shared assistant and Config App.

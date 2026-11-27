@@ -13,8 +13,9 @@
 
 import argparse
 import hashlib
+import os
 import platform
-import shutil
+import re
 import subprocess
 import sys
 import tarfile
@@ -39,15 +40,15 @@ APPS = [
 ]
 
 CODEX_RELEASE = "0.171.0-alpha.13"
-# Pin the official asset digest and byte count before downloading or extracting.
+# Linux packages include the companion executables as well as the CLI.
 CODEX_ASSETS = {
     "aarch64": (
-        124423726,
-        "6a1c5450cda493f3d316e7ffa6de98d24e9f03992efa6fd8884c057c0b13a4f0",
+        199314530,
+        "a1cff9df90784974bed7fe468b83d8ffefd91f6f030efe324a6c8dfb2b5ac0b5",
     ),
     "x86_64": (
-        122702168,
-        "2cb3e32221868bcb8a422d28a3a06f1c60a40023d6e90e1c2c8d97346818bf3a",
+        197779171,
+        "1887b68a11238013ed357e0c458ae7370c3a406338226fc24810a90e598a1b65",
     ),
 }
 
@@ -59,15 +60,52 @@ def codex_target(machine):
         raise ValueError(
             f"The optional Codex installer supports Linux ARM64 and AMD64, found {machine}."
         )
-    return f"codex-{machine}-unknown-linux-musl", *CODEX_ASSETS[machine]
+    return f"codex-package-{machine}-unknown-linux-musl", *CODEX_ASSETS[machine]
+
+
+def codex_binary_directory(executable):
+    resolved = Path(executable).resolve()
+    if resolved.name != "codex.js":
+        return resolved.parent
+
+    # Follow the official npm launcher's native-package lookup on Linux.
+    archive, *_ = codex_target(platform.machine())
+    target = archive.removeprefix("codex-package-")
+    arch = "arm64" if target.startswith("aarch64-") else "x64"
+    try:
+        manifest = subprocess.check_output(
+            [
+                "node",
+                "-p",
+                "require.resolve(process.argv[1], {paths: [process.argv[2]]})",
+                f"@openai/codex-linux-{arch}/package.json",
+                str(resolved.parent),
+            ],
+            text=True,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+        ).strip()
+    except (OSError, subprocess.SubprocessError):
+        vendor = resolved.parent.parent / "vendor"
+    else:
+        vendor = Path(manifest).parent / "vendor"
+    return vendor / target / "bin"
 
 
 def probe_codex(executable):
     description = subprocess.check_output(
         [executable, "--version"], text=True, timeout=10
     ).strip()
-    if not description.startswith("codex-cli "):
+    version = re.fullmatch(r"codex-cli (\d+)\.(\d+)\.(\d+)[^\s]*", description)
+    if version is None:
         raise ValueError(f"Unexpected CLI at {executable}.")
+    if tuple(map(int, version.groups())) >= (0, 171, 0):
+        host = codex_binary_directory(executable) / "codex-code-mode-host"
+        if not host.is_file() or not os.access(host, os.X_OK):
+            raise ValueError(
+                f"Missing executable {host.name} in {host.parent}. "
+                "Install the matching full official Codex package."
+            )
     subprocess.run(
         [executable, "app-server", "--stdio", "--help"],
         stdout=subprocess.DEVNULL,
@@ -87,9 +125,12 @@ def resolve_codex():
 from aiidalab_ai_assistant.codex_client import AIServiceError, find_codex
 
 try:
-    print(find_codex())
-except AIServiceError:
-    pass
+    executable = find_codex()
+except AIServiceError as error:
+    if "Codex is not installed" not in str(error):
+        raise SystemExit(str(error)) from None
+else:
+    print(executable)
 """,
         ],
         text=True,
@@ -104,15 +145,16 @@ def install_codex(target):
 
     filename, size, digest = target
     destination = Path.home() / ".local/bin/codex"
-    if destination.exists() or destination.is_symlink():
-        raise FileExistsError(
-            f"Review the existing Codex path before installing: {destination}"
-        )
+    bundle = Path.home() / ".local/share/aiidalab/codex" / f"{filename}-{CODEX_RELEASE}"
+    for path in (destination, bundle):
+        if path.exists() or path.is_symlink():
+            raise FileExistsError(
+                f"Review the existing Codex path before installing: {path}"
+            )
     destination.parent.mkdir(parents=True, exist_ok=True)
+    bundle.parent.mkdir(parents=True, exist_ok=True)
     url = f"https://github.com/openai/codex/releases/download/rust-v{CODEX_RELEASE}/{filename}.tar.gz"
-    with tempfile.TemporaryDirectory(
-        prefix=".codex-stage-", dir=destination.parent
-    ) as tmp:
+    with tempfile.TemporaryDirectory(prefix=".codex-stage-", dir=bundle.parent) as tmp:
         archive = Path(tmp) / "release.tar.gz"
         actual = hashlib.sha256()
         received = 0
@@ -127,23 +169,34 @@ def install_codex(target):
             raise ValueError(
                 "Codex archive size or SHA-256 differs from the official release."
             )
-        staged = Path(tmp) / "codex"
+
+        staged = Path(tmp) / "package"
         with tarfile.open(archive, "r:gz") as release:
-            member = release.getmember(filename)
-            if not member.isfile():
+            release.extractall(staged, filter="data")
+        for relative in (
+            "bin/codex",
+            "bin/codex-code-mode-host",
+            "bin/codex-exec-server",
+            "codex-path/rg",
+            "codex-resources/bwrap",
+        ):
+            path = staged / relative
+            if not path.is_file() or not os.access(path, os.X_OK):
                 raise ValueError(
-                    "Expected a regular Codex executable in the release archive."
+                    f"Official Codex package is missing an executable: {relative}"
                 )
-            with release.extractfile(member) as source, staged.open("wb") as output:
-                shutil.copyfileobj(source, output)
-        staged.chmod(0o755)
-        version = probe_codex(staged)
+        version = probe_codex(staged / "bin/codex")
         if version != f"codex-cli {CODEX_RELEASE}":
             raise ValueError(
                 f"Unexpected version in the verified Codex archive: {version}"
             )
-        destination.hardlink_to(staged)
-    print(f"Installed {version} at {destination}.")
+        staged.rename(bundle)
+        try:
+            destination.symlink_to(bundle / "bin/codex")
+        except OSError:
+            bundle.rename(staged)
+            raise
+    print(f"Installed {version} at {destination} with its runtime in {bundle}.")
 
 
 def checkout(path, repo, branch):
@@ -195,7 +248,7 @@ def main():
     parser.add_argument(
         "--with-codex",
         action="store_true",
-        help="reuse or install the official Codex CLI for optional ChatGPT sign-in",
+        help="reuse or install the full official Codex package for optional ChatGPT sign-in",
     )
     args = parser.parse_args()
     if sys.version_info < (3, 12) or platform.system() != "Linux":
